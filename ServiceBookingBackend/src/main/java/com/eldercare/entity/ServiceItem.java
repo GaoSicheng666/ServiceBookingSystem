@@ -1,0 +1,23 @@
+package com.eldercare.entity;
+
+import java.math.BigDecimal;
+
+/** 服务项目实体,对应 services 表(由管理员维护)。 */
+public class ServiceItem {
+    private Integer id;
+    private String name;
+    private String description;
+    private BigDecimal referencePrice;
+    private boolean active = true;
+
+    public Integer getId() { return id; }
+    public void setId(Integer id) { this.id = id; }
+    public String getName() { return name; }
+    public void setName(String name) { this.name = name; }
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
+    public BigDecimal getReferencePrice() { return referencePrice; }
+    public void setReferencePrice(BigDecimal referencePrice) { this.referencePrice = referencePrice; }
+    public boolean isActive() { return active; }
+    public void setActive(boolean active) { this.active = active; }
+}
