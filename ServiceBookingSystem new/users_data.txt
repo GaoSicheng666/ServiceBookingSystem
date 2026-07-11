@@ -1,0 +1,4 @@
+USER,1,1,1,1,1,1,
+USER,3,3,3,3,3,3,
+EMPLOYEE,2,2,2,2,2,2.0,true,
+EMPLOYEE,4,4,4,4,4,4.0,false,
