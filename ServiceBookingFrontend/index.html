@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>老年人服务预约系统</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">服</div>
+        <div>
+          <h1>老年人服务预约系统</h1>
+          <p>老人、护工与管理后台</p>
+        </div>
+      </div>
+
+      <section class="panel api-panel" aria-labelledby="api-title">
+        <h2 id="api-title">接口地址</h2>
+        <label class="field compact">
+          <span>Base URL</span>
+          <input id="apiBaseInput" type="url" autocomplete="off">
+        </label>
+        <button id="saveApiButton" class="btn secondary" type="button">保存地址</button>
+      </section>
+
+      <section id="authPanel" class="panel auth-panel" aria-labelledby="auth-title"></section>
+      <section id="sessionPanel" class="panel session-panel hidden" aria-labelledby="session-title"></section>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">当前工作台</p>
+          <h2 id="viewTitle">登录后开始</h2>
+        </div>
+        <div id="viewActions" class="topbar-actions"></div>
+      </header>
+
+      <section id="content" class="content" aria-live="polite"></section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+  <script src="./app.js"></script>
+</body>
+</html>
