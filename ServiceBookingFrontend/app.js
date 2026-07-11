@@ -1,7 +1,7 @@
 const DEFAULT_API_BASE = "http://121.40.96.66:8080/api";
 
 const state = {
-  apiBase: localStorage.getItem("eldercare.apiBase") || DEFAULT_API_BASE,
+  apiBase: DEFAULT_API_BASE,
   token: localStorage.getItem("eldercare.token") || "",
   role: localStorage.getItem("eldercare.role") || "",
   name: localStorage.getItem("eldercare.name") || "",
@@ -14,8 +14,6 @@ const state = {
 };
 
 const el = {
-  apiBaseInput: document.getElementById("apiBaseInput"),
-  saveApiButton: document.getElementById("saveApiButton"),
   authPanel: document.getElementById("authPanel"),
   sessionPanel: document.getElementById("sessionPanel"),
   viewTitle: document.getElementById("viewTitle"),
@@ -23,14 +21,6 @@ const el = {
   content: document.getElementById("content"),
   toast: document.getElementById("toast")
 };
-
-el.apiBaseInput.value = state.apiBase;
-el.saveApiButton.addEventListener("click", () => {
-  state.apiBase = normalizeApiBase(el.apiBaseInput.value);
-  el.apiBaseInput.value = state.apiBase;
-  localStorage.setItem("eldercare.apiBase", state.apiBase);
-  notify("接口地址已保存", "success");
-});
 
 document.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -93,6 +83,10 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "employee-cancel") {
       await employeeCancel(button.dataset.id);
+      return;
+    }
+    if (action === "navigate") {
+      openAmapNavigation(button.dataset.address);
       return;
     }
     if (action === "admin-tab") {
@@ -160,8 +154,6 @@ function render() {
         <section class="card">
           <h3>工作方式</h3>
           <p class="muted">这个网页前端直接调用 Spring Boot 后端接口，不连接 MySQL。登录成功后会按角色进入老人端、员工端或管理员后台。</p>
-          <div class="divider"></div>
-          <p class="small muted">默认接口地址是 ${escapeHtml(state.apiBase)}。如果后端部署地址变化，在左侧修改 Base URL 后保存。</p>
         </section>
         <section class="card flat">
           <h3>接口状态</h3>
@@ -731,8 +723,12 @@ function appointmentActions(item, mode) {
     return `<button class="btn danger" type="button" data-action="cancel-user" data-id="${item.id}">取消</button>`;
   }
   if (mode === "employee") {
+    const navigationButton = item.userAddress
+      ? `<button class="btn secondary" type="button" data-action="navigate" data-address="${attr(item.userAddress)}">高德导航</button>`
+      : `<button class="btn secondary" type="button" disabled title="该预约没有可用地址">地址缺失</button>`;
     return `
       <div class="row">
+        ${navigationButton}
         <button class="btn secondary" type="button" data-action="employee-complete" data-id="${item.id}">完成</button>
         <button class="btn danger" type="button" data-action="employee-cancel" data-id="${item.id}">取消</button>
       </div>
@@ -816,9 +812,17 @@ function notify(message, type = "") {
   notify.timer = window.setTimeout(() => el.toast.classList.add("hidden"), 2600);
 }
 
-function normalizeApiBase(value) {
-  const trimmed = (value || DEFAULT_API_BASE).trim();
-  return trimmed.replace(/\/+$/, "");
+function openAmapNavigation(address) {
+  const destination = String(address || "").trim();
+  if (!destination) throw new Error("该预约没有可用地址");
+
+  const params = new URLSearchParams({
+    keyword: destination,
+    view: "map",
+    src: "eldercare_service_booking",
+    callnative: "1"
+  });
+  window.open(`https://uri.amap.com/search?${params.toString()}`, "_blank", "noopener,noreferrer");
 }
 
 function roleName(role) {
