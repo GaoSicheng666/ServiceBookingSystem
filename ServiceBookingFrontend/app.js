@@ -8,14 +8,20 @@ const state = {
   authMode: "login",
   activeAdminTab: "services",
   appointmentsFilter: "",
+  userView: "home",
+  employeeView: "today",
+  bookingStep: 1,
   selectedDate: today(),
   selectedServiceId: "",
+  selectedEmployeeId: "",
   data: {}
 };
 
 const el = {
+  app: document.getElementById("app"),
   authPanel: document.getElementById("authPanel"),
   sessionPanel: document.getElementById("sessionPanel"),
+  viewEyebrow: document.getElementById("viewEyebrow"),
   viewTitle: document.getElementById("viewTitle"),
   viewActions: document.getElementById("viewActions"),
   content: document.getElementById("content"),
@@ -69,12 +75,60 @@ document.addEventListener("click", async (event) => {
       await bookEmployee(button.dataset.employeeId);
       return;
     }
+    if (action === "start-booking") {
+      startBooking();
+      return;
+    }
+    if (action === "show-user-appointments") {
+      await showUserAppointments();
+      return;
+    }
+    if (action === "user-home") {
+      await showUserHome();
+      return;
+    }
+    if (action === "select-service") {
+      selectBookingService(button.dataset.serviceId);
+      return;
+    }
+    if (action === "select-date") {
+      await selectBookingDate(button.dataset.date);
+      return;
+    }
+    if (action === "use-custom-date") {
+      await selectBookingDate(state.selectedDate);
+      return;
+    }
+    if (action === "choose-employee") {
+      chooseBookingEmployee(button.dataset.employeeId);
+      return;
+    }
+    if (action === "confirm-booking") {
+      await bookEmployee(state.selectedEmployeeId);
+      return;
+    }
+    if (action === "booking-back") {
+      bookingBack();
+      return;
+    }
+    if (action === "user-appointment-filter") {
+      await filterUserAppointments(button.dataset.status || "");
+      return;
+    }
     if (action === "cancel-user") {
       await cancelUserAppointment(button.dataset.id);
       return;
     }
     if (action === "employee-status") {
       await updateEmployeeStatus(button.dataset.working === "true");
+      return;
+    }
+    if (action === "employee-view") {
+      await showEmployeeView(button.dataset.view);
+      return;
+    }
+    if (action === "employee-task-filter") {
+      await filterEmployeeTasks(button.dataset.status || "");
       return;
     }
     if (action === "employee-complete") {
@@ -126,6 +180,21 @@ document.addEventListener("click", async (event) => {
 
 document.addEventListener("change", async (event) => {
   const target = event.target;
+  if (target.matches("[data-password-toggle]")) {
+    const password = target.closest("form")?.querySelector('input[name="password"]');
+    if (password) password.type = target.checked ? "text" : "password";
+  }
+  if (target.id === "employeeWorkingToggle") {
+    target.disabled = true;
+    try {
+      await updateEmployeeStatus(target.checked);
+    } catch (error) {
+      target.checked = !target.checked;
+      notify(error.message, "error");
+    } finally {
+      target.disabled = false;
+    }
+  }
   if (target.id === "registerRole") renderRegisterRoleFields(target.value);
   if (target.id === "serviceSelect") state.selectedServiceId = target.value;
   if (target.id === "bookingDate") state.selectedDate = target.value || today();
@@ -144,24 +213,13 @@ render();
 if (state.token) refreshDashboard().catch((error) => notify(error.message, "error"));
 
 function render() {
+  syncLayout();
   renderAuth();
   renderSession();
   if (!state.token) {
     el.viewTitle.textContent = "登录后开始";
     el.viewActions.innerHTML = "";
-    el.content.innerHTML = `
-      <div class="grid two">
-        <section class="card">
-          <h3>工作方式</h3>
-          <p class="muted">这个网页前端直接调用 Spring Boot 后端接口，不连接 MySQL。登录成功后会按角色进入老人端、员工端或管理员后台。</p>
-        </section>
-        <section class="card flat">
-          <h3>接口状态</h3>
-          <p class="muted">请先登录。除注册和登录外，后端接口需要在请求头里携带 JWT 令牌。</p>
-          <button class="btn secondary" type="button" data-action="refresh">重新检测</button>
-        </section>
-      </div>
-    `;
+    el.content.innerHTML = "";
   }
 }
 
@@ -173,12 +231,14 @@ function renderAuth() {
   el.authPanel.classList.remove("hidden");
   if (state.authMode === "register") {
     el.authPanel.innerHTML = `
-      <h2 id="auth-title">注册账号</h2>
-      <div class="tabs" role="tablist">
-        <button class="tab" type="button" data-action="switch-auth" data-mode="login">登录</button>
-        <button class="tab active" type="button" data-action="switch-auth" data-mode="register">注册</button>
+      <div class="auth-card-header">
+        <p>新用户注册</p>
+        <h2 id="auth-title">创建您的账号</h2>
       </div>
-      <div class="divider"></div>
+      <div class="tabs auth-tabs" role="tablist" aria-label="账号操作">
+        <button class="tab" type="button" role="tab" aria-selected="false" data-action="switch-auth" data-mode="login">登录</button>
+        <button class="tab active" type="button" role="tab" aria-selected="true" data-action="switch-auth" data-mode="register">注册</button>
+      </div>
       <form data-submit="register">
         <label class="field">
           <span>角色</span>
@@ -187,13 +247,14 @@ function renderAuth() {
             <option value="EMPLOYEE">护工员工</option>
           </select>
         </label>
-        <label class="field"><span>用户名</span><input name="username" required autocomplete="username"></label>
-        <label class="field"><span>密码</span><input name="password" type="password" required autocomplete="new-password"></label>
-        <label class="field"><span>姓名</span><input name="name" required></label>
-        <label class="field"><span>联系电话</span><input name="phone" required inputmode="tel"></label>
-        <label class="field"><span>年龄</span><input name="age" type="number" min="1" max="120" required></label>
+        <label class="field"><span>用户名</span><input name="username" required autocomplete="username" placeholder="请输入用户名"></label>
+        <label class="field"><span>密码</span><input name="password" type="password" required autocomplete="new-password" placeholder="请输入密码"></label>
+        <label class="password-toggle"><input type="checkbox" data-password-toggle>显示密码</label>
+        <label class="field"><span>姓名</span><input name="name" required placeholder="请输入真实姓名"></label>
+        <label class="field"><span>联系电话</span><input name="phone" type="tel" required inputmode="tel" placeholder="请输入联系电话"></label>
+        <label class="field"><span>年龄</span><input name="age" type="number" min="1" max="120" required placeholder="请输入年龄"></label>
         <div id="roleFields"></div>
-        <button class="btn" type="submit">创建账号</button>
+        <button class="btn auth-submit" type="submit">完成注册</button>
       </form>
     `;
     renderRegisterRoleFields("USER");
@@ -201,16 +262,19 @@ function renderAuth() {
   }
 
   el.authPanel.innerHTML = `
-    <h2 id="auth-title">登录系统</h2>
-    <div class="tabs" role="tablist">
-      <button class="tab active" type="button" data-action="switch-auth" data-mode="login">登录</button>
-      <button class="tab" type="button" data-action="switch-auth" data-mode="register">注册</button>
+    <div class="auth-card-header">
+      <p>欢迎回来</p>
+      <h2 id="auth-title">登录您的账号</h2>
     </div>
-    <div class="divider"></div>
+    <div class="tabs auth-tabs" role="tablist" aria-label="账号操作">
+      <button class="tab active" type="button" role="tab" aria-selected="true" data-action="switch-auth" data-mode="login">登录</button>
+      <button class="tab" type="button" role="tab" aria-selected="false" data-action="switch-auth" data-mode="register">注册</button>
+    </div>
     <form data-submit="login">
-      <label class="field"><span>用户名</span><input name="username" required autocomplete="username"></label>
-      <label class="field"><span>密码</span><input name="password" type="password" required autocomplete="current-password"></label>
-      <button class="btn" type="submit">登录</button>
+      <label class="field"><span>用户名</span><input name="username" required autocomplete="username" placeholder="请输入用户名"></label>
+      <label class="field"><span>密码</span><input name="password" type="password" required autocomplete="current-password" placeholder="请输入密码"></label>
+      <label class="password-toggle"><input type="checkbox" data-password-toggle>显示密码</label>
+      <button class="btn auth-submit" type="submit">立即登录</button>
     </form>
   `;
 }
@@ -218,21 +282,39 @@ function renderAuth() {
 function renderRegisterRoleFields(role) {
   const box = document.getElementById("roleFields");
   if (!box) return;
+  const ageInput = box.closest("form")?.querySelector('input[name="age"]');
+  if (ageInput) {
+    ageInput.min = role === "EMPLOYEE" ? "18" : "1";
+    ageInput.placeholder = role === "EMPLOYEE" ? "护工年龄需满18岁" : "请输入年龄";
+  }
   if (role === "EMPLOYEE") {
-    box.innerHTML = `<label class="field"><span>薪资要求</span><input name="salary" type="number" min="0" step="0.01" required></label>`;
+    box.innerHTML = `<label class="field"><span>薪资要求</span><input name="salary" type="number" min="0" step="0.01" required placeholder="请输入薪资要求"></label>`;
   } else {
-    box.innerHTML = `<label class="field"><span>居住地址</span><textarea name="address" required></textarea></label>`;
+    box.innerHTML = `<label class="field"><span>居住地址</span><textarea name="address" required placeholder="请输入详细居住地址"></textarea></label>`;
   }
 }
 
 function renderSession() {
+  syncLayout();
   if (!state.token) {
+    el.sessionPanel.classList.remove("senior-session");
     el.sessionPanel.classList.add("hidden");
     el.sessionPanel.innerHTML = "";
     return;
   }
   el.authPanel.classList.add("hidden");
   el.sessionPanel.classList.remove("hidden");
+  el.sessionPanel.classList.toggle("senior-session", state.role === "USER");
+  if (state.role === "USER") {
+    el.sessionPanel.innerHTML = `
+      <h2 id="session-title">您好</h2>
+      <p><strong>${escapeHtml(state.name || "已登录")}</strong></p>
+      <div class="divider"></div>
+      <button class="btn secondary" type="button" data-action="user-home">返回服务首页</button>
+      <button class="btn ghost" type="button" data-action="logout">退出登录</button>
+    `;
+    return;
+  }
   el.sessionPanel.innerHTML = `
     <h2 id="session-title">当前账号</h2>
     <p><strong>${escapeHtml(state.name || "已登录")}</strong></p>
@@ -241,6 +323,11 @@ function renderSession() {
     <button class="btn secondary" type="button" data-action="refresh">刷新数据</button>
     <button class="btn ghost" type="button" data-action="logout">退出登录</button>
   `;
+}
+
+function syncLayout() {
+  el.app.classList.toggle("is-authenticated", Boolean(state.token));
+  el.app.classList.toggle("is-senior", Boolean(state.token) && state.role === "USER");
 }
 
 async function login(body) {
@@ -270,6 +357,11 @@ function logout() {
   state.role = "";
   state.name = "";
   state.data = {};
+  state.appointmentsFilter = "";
+  state.userView = "home";
+  state.employeeView = "today";
+  state.bookingStep = 1;
+  state.selectedEmployeeId = "";
   localStorage.removeItem("eldercare.token");
   localStorage.removeItem("eldercare.role");
   localStorage.removeItem("eldercare.name");
@@ -300,15 +392,13 @@ async function loadUserDashboard() {
   state.data.user = me;
   state.data.services = services;
   state.data.userAppointments = appointments;
-  await loadAvailableEmployees(false);
 }
 
 async function loadAvailableEmployees(showMessage = true) {
   const date = state.selectedDate || today();
   const employees = await api(`/employees/available?date=${encodeURIComponent(date)}`);
   state.data.availableEmployees = employees;
-  if (state.role === "USER") renderUserDashboard();
-  if (showMessage) notify("可预约员工已刷新", "success");
+  if (showMessage) notify("服务人员已更新", "success");
 }
 
 function renderUserDashboard() {
@@ -316,69 +406,231 @@ function renderUserDashboard() {
   const services = state.data.services || [];
   const employees = state.data.availableEmployees || [];
   const appointments = state.data.userAppointments || [];
-  el.viewTitle.textContent = "老人用户工作台";
-  el.viewActions.innerHTML = `<button class="btn secondary" type="button" data-action="refresh">刷新</button>`;
+  el.viewEyebrow.textContent = "长辈服务首页";
+  el.viewTitle.textContent = `您好，${user.name || state.name || "欢迎使用"}`;
+  el.viewActions.innerHTML = "";
+
+  if (state.userView === "booking") {
+    el.content.innerHTML = renderBookingWizard(services, employees);
+    return;
+  }
+  if (state.userView === "appointments") {
+    el.content.innerHTML = renderUserAppointments(appointments);
+    return;
+  }
+
+  const pendingCount = appointments.filter((item) => item.status === "PENDING").length;
   el.content.innerHTML = `
-    <div class="grid two">
-      <section class="card">
-        <h3>我的信息</h3>
-        <p><strong>${escapeHtml(user.name)}</strong> <span class="badge">${escapeHtml(user.username)}</span></p>
-        <p class="muted">电话：${escapeHtml(user.phone)}　年龄：${escapeHtml(user.age)}</p>
-        <p class="muted">地址：${escapeHtml(user.address)}</p>
+    <div class="senior-shell senior-home">
+      <section class="senior-greeting">
+        <p>今天需要什么帮助？</p>
+        <h3>请选择您要办理的事情</h3>
       </section>
-      <section class="card">
-        <h3>预约筛选</h3>
-        <div class="split-form">
-          <label class="field">
-            <span>服务项目</span>
-            <select id="serviceSelect">
-              <option value="">请选择服务项目</option>
-              ${services.map((item) => `<option value="${item.id}" ${String(item.id) === String(state.selectedServiceId) ? "selected" : ""}>${escapeHtml(item.name)} ${item.referencePrice ? "¥" + escapeHtml(item.referencePrice) : ""}</option>`).join("")}
-            </select>
-          </label>
-          <label class="field">
-            <span>预约日期</span>
-            <input id="bookingDate" type="date" min="${today()}" value="${escapeHtml(state.selectedDate || today())}">
-          </label>
-        </div>
-        <button class="btn secondary" type="button" data-action="load-available">查询可预约员工</button>
-      </section>
-    </div>
-
-    <section class="card">
-      <h3>可预约员工</h3>
-      ${renderEmployees(employees)}
-    </section>
-
-    <section class="card">
-      <div class="row">
-        <h3 class="section-title">我的预约</h3>
-        ${filterSelect()}
+      <div class="senior-entry-list">
+        <button class="senior-entry primary" type="button" data-action="start-booking">
+          <span class="senior-entry-symbol" aria-hidden="true">＋</span>
+          <span><strong>立即预约服务</strong><small>选择服务、日期和服务人员</small></span>
+          <span class="senior-entry-arrow" aria-hidden="true">›</span>
+        </button>
+        <button class="senior-entry" type="button" data-action="show-user-appointments">
+          <span class="senior-entry-symbol" aria-hidden="true">日</span>
+          <span><strong>查看我的预约</strong><small>${pendingCount ? `您有 ${pendingCount} 个待服务预约` : "查看预约记录和服务状态"}</small></span>
+          <span class="senior-entry-arrow" aria-hidden="true">›</span>
+        </button>
       </div>
-      ${appointmentsTable(appointments, "user")}
-    </section>
+    </div>
   `;
 }
 
-function renderEmployees(employees) {
-  if (!employees.length) return `<div class="empty">当前日期暂无可预约员工，可以更换日期后重试。</div>`;
+function startBooking() {
+  state.userView = "booking";
+  state.bookingStep = 1;
+  state.selectedServiceId = "";
+  state.selectedEmployeeId = "";
+  state.data.availableEmployees = [];
+  renderUserDashboard();
+}
+
+async function showUserHome() {
+  state.userView = "home";
+  state.appointmentsFilter = "";
+  await loadUserDashboard();
+  renderSession();
+  renderUserDashboard();
+}
+
+async function showUserAppointments() {
+  state.userView = "appointments";
+  state.appointmentsFilter = "";
+  await loadUserDashboard();
+  renderUserDashboard();
+}
+
+async function filterUserAppointments(status) {
+  state.appointmentsFilter = status;
+  await loadUserDashboard();
+  renderUserDashboard();
+}
+
+function selectBookingService(serviceId) {
+  state.selectedServiceId = serviceId;
+  state.bookingStep = 2;
+  renderUserDashboard();
+}
+
+async function selectBookingDate(date) {
+  if (!date) throw new Error("请选择服务日期");
+  state.selectedDate = date;
+  state.bookingStep = 3;
+  state.selectedEmployeeId = "";
+  await loadAvailableEmployees(false);
+  renderUserDashboard();
+}
+
+function chooseBookingEmployee(employeeId) {
+  state.selectedEmployeeId = employeeId;
+  state.bookingStep = 4;
+  renderUserDashboard();
+}
+
+function bookingBack() {
+  if (state.bookingStep <= 1) {
+    state.userView = "home";
+  } else {
+    state.bookingStep -= 1;
+  }
+  renderUserDashboard();
+}
+
+function renderBookingWizard(services, employees) {
+  const step = state.bookingStep;
+  const headings = ["您需要什么服务？", "您希望哪天服务？", "选择服务人员", "确认预约信息"];
+  let body = "";
+
+  if (step === 1) body = renderServiceChoices(services);
+  if (step === 2) body = renderDateChoices();
+  if (step === 3) body = renderStaffChoices(employees);
+  if (step === 4) body = renderBookingConfirmation(services, employees);
+
   return `
-    <div class="list">
-      ${employees.map((employee) => `
-        <article class="employee-card">
-          <div>
-            <h4>${escapeHtml(employee.name)} <span class="badge success">可预约</span></h4>
-            <p>年龄：${escapeHtml(employee.age)}　电话：${escapeHtml(employee.phone)}　薪资：¥${escapeHtml(employee.salary)}</p>
-          </div>
-          <button class="btn" type="button" data-action="book" data-employee-id="${employee.id}">预约</button>
-        </article>
-      `).join("")}
+    <div class="senior-shell booking-wizard">
+      <div class="booking-toolbar">
+        <button class="senior-back" type="button" data-action="booking-back">← 返回上一步</button>
+        <span>第 ${step} 步，共 4 步</span>
+      </div>
+      ${renderBookingProgress(step)}
+      <header class="booking-heading"><h3>${headings[step - 1]}</h3></header>
+      ${body}
     </div>
   `;
+}
+
+function renderBookingProgress(step) {
+  const labels = ["选服务", "选日期", "选人员", "确认"];
+  return `<div class="booking-progress" aria-label="预约进度">${labels.map((label, index) => `
+    <div class="${index + 1 <= step ? "active" : ""}"><span>${index + 1}</span><small>${label}</small></div>
+  `).join("")}</div>`;
+}
+
+function renderServiceChoices(services) {
+  if (!services.length) return `<div class="senior-empty">暂时没有可预约的服务，请稍后再试。</div>`;
+  return `<div class="service-choice-grid">${services.map((service) => `
+    <button class="service-choice" type="button" data-action="select-service" data-service-id="${service.id}">
+      <strong>${escapeHtml(service.name)}</strong>
+      <span>${escapeHtml(service.description || "上门养老服务")}</span>
+      <small>${Number(service.referencePrice) > 0 ? `参考价格 ¥${escapeHtml(service.referencePrice)}` : "价格以实际服务为准"}</small>
+    </button>
+  `).join("")}</div>`;
+}
+
+function renderDateChoices() {
+  const dates = [0, 1, 2].map((offset) => offsetDate(offset));
+  const names = ["今天", "明天", "后天"];
+  return `
+    <div class="date-choice-grid">
+      ${dates.map((date, index) => `<button class="date-choice" type="button" data-action="select-date" data-date="${date}"><strong>${names[index]}</strong><span>${formatFriendlyDate(date)}</span></button>`).join("")}
+    </div>
+    <div class="custom-date-choice">
+      <label class="field"><span>选择其他日期</span><input id="bookingDate" type="date" min="${today()}" value="${escapeHtml(state.selectedDate || today())}"></label>
+      <button class="btn senior-primary" type="button" data-action="use-custom-date">下一步：选择服务人员</button>
+    </div>
+  `;
+}
+
+function renderStaffChoices(employees) {
+  if (!employees.length) return `
+    <div class="senior-empty">
+      <strong>${formatFriendlyDate(state.selectedDate)} 暂无可预约人员</strong>
+      <p>请返回上一步选择其他日期。</p>
+    </div>
+  `;
+  return `<div class="staff-choice-list">${employees.map((employee) => `
+    <button class="staff-choice" type="button" data-action="choose-employee" data-employee-id="${employee.id}">
+      <span class="staff-avatar" aria-hidden="true">${escapeHtml(firstCharacter(employee.name))}</span>
+      <span><strong>${escapeHtml(employee.name)}</strong><small>平台服务人员 · 当日可预约</small></span>
+      <span class="staff-select">选择</span>
+    </button>
+  `).join("")}</div>`;
+}
+
+function renderBookingConfirmation(services, employees) {
+  const service = services.find((item) => String(item.id) === String(state.selectedServiceId));
+  const employee = employees.find((item) => String(item.id) === String(state.selectedEmployeeId));
+  if (!service || !employee) return `<div class="senior-empty">预约信息不完整，请返回上一步重新选择。</div>`;
+  return `
+    <div class="booking-summary">
+      <dl>
+        <div><dt>服务项目</dt><dd>${escapeHtml(service.name)}</dd></div>
+        <div><dt>服务日期</dt><dd>${formatFriendlyDate(state.selectedDate)}</dd></div>
+        <div><dt>服务人员</dt><dd>${escapeHtml(employee.name)}</dd></div>
+      </dl>
+      <button class="btn senior-primary confirm-booking" type="button" data-action="confirm-booking">确认预约</button>
+    </div>
+  `;
+}
+
+function renderUserAppointments(appointments) {
+  const filters = [["", "全部"], ["PENDING", "待服务"], ["COMPLETED", "已完成"], ["CANCELLED", "已取消"]];
+  return `
+    <div class="senior-shell senior-appointments">
+      <div class="appointments-heading">
+        <button class="senior-back" type="button" data-action="user-home">← 返回服务首页</button>
+        <h3>我的预约</h3>
+      </div>
+      <div class="senior-filter" aria-label="预约状态筛选">
+        ${filters.map(([value, label]) => `<button type="button" class="${state.appointmentsFilter === value ? "active" : ""}" data-action="user-appointment-filter" data-status="${value}">${label}</button>`).join("")}
+      </div>
+      ${appointments.length ? `<div class="appointment-card-list">${appointments.map(renderUserAppointmentCard).join("")}</div>` : `<div class="senior-empty">这里暂时没有预约记录。</div>`}
+    </div>
+  `;
+}
+
+function renderUserAppointmentCard(item) {
+  return `
+    <article class="senior-appointment-card">
+      <div class="appointment-card-top">
+        <h4>${escapeHtml(item.serviceName)}</h4>
+        ${seniorStatusBadge(item.status)}
+      </div>
+      <p class="appointment-date">${formatFriendlyDate(item.appointmentDate)}</p>
+      <div class="appointment-person">
+        <p><span>服务人员</span><strong>${escapeHtml(item.employeeName)}</strong></p>
+        ${item.employeePhone ? `<p><span>联系电话</span><strong>${escapeHtml(item.employeePhone)}</strong></p>` : ""}
+      </div>
+      ${item.status === "PENDING" ? `<div class="appointment-card-actions"><button class="btn danger" type="button" data-action="cancel-user" data-id="${item.id}">取消这个预约</button></div>` : ""}
+    </article>
+  `;
+}
+
+function seniorStatusBadge(status) {
+  if (status === "COMPLETED") return `<span class="senior-status completed">✓ 服务已完成</span>`;
+  if (status === "CANCELLED") return `<span class="senior-status cancelled">× 预约已取消</span>`;
+  return `<span class="senior-status pending">● 已预约，等待服务</span>`;
 }
 
 async function bookEmployee(employeeId) {
   if (!state.selectedServiceId) throw new Error("请先选择服务项目");
+  if (!employeeId) throw new Error("请选择服务人员");
   const date = state.selectedDate || today();
   await api("/appointments", {
     method: "POST",
@@ -389,12 +641,16 @@ async function bookEmployee(employeeId) {
     }
   });
   notify("预约成功", "success");
+  state.userView = "appointments";
+  state.bookingStep = 1;
+  state.appointmentsFilter = "";
+  state.selectedEmployeeId = "";
   await loadUserDashboard();
   renderUserDashboard();
 }
 
 async function cancelUserAppointment(id) {
-  if (!confirm("确认取消这条预约吗？")) return;
+  if (!confirm("确定要取消这个预约吗？")) return;
   await api(`/appointments/${id}/cancel`, { method: "PATCH" });
   notify("预约已取消", "success");
   await loadUserDashboard();
@@ -402,54 +658,155 @@ async function cancelUserAppointment(id) {
 }
 
 async function loadEmployeeDashboard() {
-  const [me, appointments] = await Promise.all([
+  const query = state.employeeView === "all" ? statusQuery() : "";
+  const [me, appointments, allAppointments] = await Promise.all([
     api("/employees/me"),
-    api(`/employees/me/appointments${statusQuery()}`)
+    api(`/employees/me/appointments${query}`),
+    query ? api("/employees/me/appointments") : Promise.resolve(null)
   ]);
   state.data.employee = me;
   state.data.employeeAppointments = appointments;
+  state.data.employeeAllAppointments = allAppointments || appointments;
 }
 
 function renderEmployeeDashboard() {
   const employee = state.data.employee || {};
   const appointments = state.data.employeeAppointments || [];
-  el.viewTitle.textContent = "护工员工工作台";
-  el.viewActions.innerHTML = `<button class="btn secondary" type="button" data-action="refresh">刷新</button>`;
-  el.content.innerHTML = `
-    <div class="grid two">
-      <section class="card">
-        <h3>我的信息</h3>
-        <p><strong>${escapeHtml(employee.name)}</strong> <span class="badge">${escapeHtml(employee.username)}</span></p>
-        <p class="muted">电话：${escapeHtml(employee.phone)}　年龄：${escapeHtml(employee.age)}　薪资：¥${escapeHtml(employee.salary)}</p>
-      </section>
-      <section class="card">
-        <h3>接单状态</h3>
-        <p>${employee.working ? `<span class="badge success">工作中，可接单</span>` : `<span class="badge warning">暂停工作</span>`}</p>
-        <button class="btn ${employee.working ? "accent" : ""}" type="button" data-action="employee-status" data-working="${!employee.working}">
-          ${employee.working ? "暂停接单" : "开始接单"}
-        </button>
-      </section>
-    </div>
+  const allAppointments = state.data.employeeAllAppointments || appointments;
+  const todayTasks = allAppointments.filter((item) => item.appointmentDate === today());
+  const pendingTasks = allAppointments.filter((item) => item.status === "PENDING");
+  const completedToday = todayTasks.filter((item) => item.status === "COMPLETED").length;
+  const nextTask = [...pendingTasks]
+    .sort((a, b) => String(a.appointmentDate).localeCompare(String(b.appointmentDate)))
+    .find((item) => item.appointmentDate >= today()) || pendingTasks[0];
 
-    <section class="card">
-      <div class="row">
-        <h3 class="section-title">分配给我的预约</h3>
-        ${filterSelect()}
+  el.viewEyebrow.textContent = "护工任务中心";
+  el.viewTitle.textContent = `${timeGreeting()}，${employee.name || state.name || "您好"}`;
+  el.viewActions.innerHTML = "";
+  el.content.innerHTML = `
+    <div class="employee-workbench">
+      <section class="employee-overview">
+        <div class="employee-metrics" aria-label="任务概况">
+          <div><span>今日任务</span><strong>${todayTasks.length}</strong><small>项</small></div>
+          <div><span>待服务</span><strong>${pendingTasks.length}</strong><small>项</small></div>
+          <div><span>今日完成</span><strong>${completedToday}</strong><small>项</small></div>
+        </div>
+        <label class="employee-status-switch">
+          <input id="employeeWorkingToggle" type="checkbox" ${employee.working ? "checked" : ""}>
+          <span class="switch-track" aria-hidden="true"><span></span></span>
+          <span class="switch-copy">
+            <strong>${employee.working ? "接单中" : "暂停接单"}</strong>
+            <small>${employee.working ? "可以接收新的服务预约" : "暂时不接收新的服务预约"}</small>
+          </span>
+        </label>
+      </section>
+
+      <nav class="employee-view-tabs" aria-label="任务视图">
+        <button type="button" class="${state.employeeView === "today" ? "active" : ""}" data-action="employee-view" data-view="today">任务首页</button>
+        <button type="button" class="${state.employeeView === "all" ? "active" : ""}" data-action="employee-view" data-view="all">全部任务</button>
+      </nav>
+
+      ${state.employeeView === "all"
+        ? renderAllEmployeeTasks(appointments)
+        : renderEmployeeTodayView(nextTask, todayTasks)}
+    </div>
+  `;
+}
+
+async function showEmployeeView(view) {
+  state.employeeView = view === "all" ? "all" : "today";
+  state.appointmentsFilter = "";
+  await loadEmployeeDashboard();
+  renderEmployeeDashboard();
+}
+
+async function filterEmployeeTasks(status) {
+  state.employeeView = "all";
+  state.appointmentsFilter = status;
+  await loadEmployeeDashboard();
+  renderEmployeeDashboard();
+}
+
+function renderEmployeeTodayView(nextTask, todayTasks) {
+  return `
+    <section class="next-task-section">
+      <div class="employee-section-heading">
+        <div><p>优先处理</p><h3>下一项待服务任务</h3></div>
       </div>
-      ${appointmentsTable(appointments, "employee")}
+      ${nextTask ? renderEmployeeNextTask(nextTask) : `<div class="employee-empty"><strong>当前没有待服务任务</strong><p>新的预约任务会显示在这里。</p></div>`}
+    </section>
+    <section class="today-task-section">
+      <div class="employee-section-heading"><div><p>${formatFriendlyDate(today())}</p><h3>今日任务</h3></div></div>
+      ${todayTasks.length ? `<div class="employee-task-list">${todayTasks.map((task) => renderEmployeeTaskCard(task, true)).join("")}</div>` : `<div class="employee-empty">今天暂时没有服务任务。</div>`}
     </section>
   `;
 }
 
+function renderEmployeeNextTask(task) {
+  return `
+    <article class="next-task-card">
+      <div class="next-task-main">
+        <div class="task-date-block"><span>服务日期</span><strong>${formatFriendlyDate(task.appointmentDate)}</strong></div>
+        <div><p class="task-service-name">${escapeHtml(task.serviceName)}</p><p class="task-client">服务对象：<strong>${escapeHtml(task.userName)}</strong></p></div>
+        ${employeeTaskStatus(task.status)}
+      </div>
+      <div class="task-address"><span>服务地点</span><strong>${escapeHtml(task.userAddress || "预约中未填写地址")}</strong></div>
+      ${renderEmployeeTaskActions(task, true)}
+    </article>
+  `;
+}
+
+function renderAllEmployeeTasks(appointments) {
+  const filters = [["", "全部"], ["PENDING", "待服务"], ["COMPLETED", "已完成"], ["CANCELLED", "已取消"]];
+  return `
+    <section class="all-task-section">
+      <div class="employee-section-heading"><div><p>任务记录</p><h3>全部任务</h3></div></div>
+      <div class="employee-task-filter">
+        ${filters.map(([value, label]) => `<button type="button" class="${state.appointmentsFilter === value ? "active" : ""}" data-action="employee-task-filter" data-status="${value}">${label}</button>`).join("")}
+      </div>
+      ${appointments.length ? `<div class="employee-task-list">${appointments.map((task) => renderEmployeeTaskCard(task)).join("")}</div>` : `<div class="employee-empty">当前筛选条件下没有任务。</div>`}
+    </section>
+  `;
+}
+
+function renderEmployeeTaskCard(task, compact = false) {
+  return `
+    <article class="employee-task-card ${compact ? "compact" : ""}">
+      <div class="employee-task-date"><strong>${formatFriendlyDate(task.appointmentDate)}</strong><span>${escapeHtml(task.serviceName)}</span></div>
+      <div class="employee-task-client"><span>服务对象</span><strong>${escapeHtml(task.userName)}</strong><small>${escapeHtml(task.userAddress || "未填写地址")}</small></div>
+      ${employeeTaskStatus(task.status)}
+      ${renderEmployeeTaskActions(task)}
+    </article>
+  `;
+}
+
+function renderEmployeeTaskActions(task, prominent = false) {
+  if (task.status !== "PENDING") return "";
+  return `
+    <div class="employee-task-actions ${prominent ? "prominent" : ""}">
+      ${task.userPhone ? `<a class="btn secondary" href="tel:${attr(task.userPhone)}">电话联系</a>` : ""}
+      ${task.userAddress ? `<button class="btn secondary" type="button" data-action="navigate" data-address="${attr(task.userAddress)}">查看路线</button>` : ""}
+      <button class="btn" type="button" data-action="employee-complete" data-id="${task.id}">确认完成服务</button>
+      <button class="btn danger" type="button" data-action="employee-cancel" data-id="${task.id}">取消任务</button>
+    </div>
+  `;
+}
+
+function employeeTaskStatus(status) {
+  if (status === "COMPLETED") return `<span class="employee-task-status completed">✓ 已完成</span>`;
+  if (status === "CANCELLED") return `<span class="employee-task-status cancelled">× 已取消</span>`;
+  return `<span class="employee-task-status pending">● 待服务</span>`;
+}
+
 async function updateEmployeeStatus(working) {
   await api("/employees/me/status", { method: "PATCH", body: { isWorking: working } });
-  notify(working ? "已开始接单" : "已暂停接单", "success");
+  notify(working ? "已进入接单状态" : "已暂停接收新预约", "success");
   await loadEmployeeDashboard();
   renderEmployeeDashboard();
 }
 
 async function employeeComplete(id) {
-  if (!confirm("确认将这条预约标记为已完成吗？")) return;
+  if (!confirm("确定这项服务已经完成吗？")) return;
   await api(`/employees/me/appointments/${id}/complete`, { method: "PATCH" });
   notify("预约已标记完成", "success");
   await loadEmployeeDashboard();
@@ -457,7 +814,7 @@ async function employeeComplete(id) {
 }
 
 async function employeeCancel(id) {
-  if (!confirm("确认取消这条分配给你的预约吗？")) return;
+  if (!confirm("确定要取消这项任务吗？")) return;
   await api(`/employees/me/appointments/${id}/cancel`, { method: "PATCH" });
   notify("预约已取消", "success");
   await loadEmployeeDashboard();
@@ -483,6 +840,7 @@ function renderAdminDashboard() {
   const users = state.data.adminUsers || [];
   const employees = state.data.adminEmployees || [];
   const appointments = state.data.adminAppointments || [];
+  el.viewEyebrow.textContent = "当前工作台";
   el.viewTitle.textContent = "管理员后台";
   el.viewActions.innerHTML = `<button class="btn secondary" type="button" data-action="refresh">刷新</button>`;
   el.content.innerHTML = `
@@ -838,6 +1196,35 @@ function today() {
   const month = String(now.getMonth() + 1).padStart(2, "0");
   const day = String(now.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function offsetDate(offset) {
+  const date = new Date();
+  date.setDate(date.getDate() + offset);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatFriendlyDate(value) {
+  if (!value) return "未选择日期";
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const weekdays = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${weekdays[date.getDay()]}`;
+}
+
+function firstCharacter(value) {
+  return Array.from(String(value || "服务"))[0] || "服";
+}
+
+function timeGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 11) return "上午好";
+  if (hour < 14) return "中午好";
+  if (hour < 18) return "下午好";
+  return "晚上好";
 }
 
 function escapeHtml(value) {

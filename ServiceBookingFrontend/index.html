@@ -4,13 +4,28 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>老年人服务预约系统</title>
+  <link rel="icon" type="image/png" href="./assets/app-icon.png">
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
   <div id="app" class="app-shell">
+    <section class="auth-welcome" aria-labelledby="welcome-title">
+      <div class="auth-welcome-content">
+        <div class="welcome-brand">
+          <img src="./assets/app-icon.png" alt="">
+          <span>老年人服务预约系统</span>
+        </div>
+        <div class="welcome-copy">
+          <p class="welcome-kicker">居家养老服务预约平台</p>
+          <h1 id="welcome-title">安心预约，贴心服务</h1>
+          <p>让每一次上门服务更清晰、更可靠，为长辈与家人带来从容安心的照护体验。</p>
+        </div>
+      </div>
+    </section>
+
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-mark" aria-hidden="true">服</div>
+        <img class="brand-mark" src="./assets/app-icon.png" alt="">
         <div>
           <h1>老年人服务预约系统</h1>
           <p>老人、护工与管理后台</p>
@@ -24,7 +39,7 @@
     <main class="workspace">
       <header class="topbar">
         <div>
-          <p class="eyebrow">当前工作台</p>
+          <p id="viewEyebrow" class="eyebrow">当前工作台</p>
           <h2 id="viewTitle">登录后开始</h2>
         </div>
         <div id="viewActions" class="topbar-actions"></div>
