@@ -1,3 +1,5 @@
+/* ==================== 全局设计变量 ====================
+   颜色、阴影等公共值集中定义在这里。修改变量即可统一调整整个系统的视觉风格。 */
 :root {
   --bg: #f5f6f1;
   --surface: #ffffff;
@@ -14,6 +16,7 @@
   --shadow: 0 16px 40px rgba(37, 48, 44, 0.12);
 }
 
+/* 所有元素都使用 border-box，元素设置的宽高会包含内边距和边框，便于计算布局。 */
 * {
   box-sizing: border-box;
 }
@@ -23,6 +26,8 @@ body {
   min-height: 100%;
 }
 
+/* ==================== 未登录页 ====================
+   默认隐藏欢迎图片区；只有 app-shell 尚未带 is-authenticated 时才显示双栏登录页。 */
 .auth-welcome {
   display: none;
 }
@@ -43,6 +48,7 @@ body {
   background: var(--primary) url("./assets/auth-care-illustration.png") center / cover no-repeat;
 }
 
+/* 图片上覆盖半透明绿色遮罩，提高白色品牌文字与背景图之间的对比度。 */
 .app-shell:not(.is-authenticated) .auth-welcome::before {
   content: "";
   position: absolute;
@@ -195,7 +201,129 @@ body {
   min-height: 84px;
 }
 
-.password-toggle {
+/* 注册字段获得焦点后显示的动态要求；未满足条件时只显示红色提示。 */
+.register-control {
+  width: 100%;
+  display: grid;
+  gap: 7px;
+  position: relative;
+}
+
+.register-control > input,
+.register-control > textarea {
+  width: 100%;
+  padding-right: 52px;
+}
+
+/* 密码框同时为自定义小眼睛和校验对号预留空间。 */
+.register-control.password-control > input {
+  padding-right: 92px;
+}
+
+.password-control {
+  width: 100%;
+  position: relative;
+}
+
+.password-control > input {
+  width: 100%;
+  padding-right: 54px;
+}
+
+.password-eye {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: #34443e;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  position: absolute;
+  top: 25px;
+  right: 8px;
+  z-index: 2;
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.password-eye:hover {
+  color: var(--primary);
+  background: #edf3f0;
+}
+
+.password-eye:focus-visible {
+  outline: 3px solid rgba(47, 111, 104, 0.22);
+  outline-offset: 1px;
+}
+
+.password-eye svg {
+  width: 24px;
+  height: 24px;
+  display: block;
+}
+
+.register-hint {
+  min-height: 22px;
+  margin-top: -2px;
+  display: flex;
+  align-items: baseline;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.register-hint[hidden] {
+  display: none;
+}
+
+.register-hint strong {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* 校验通过后将提示脱离文档流，固定在输入白框内部最右侧。 */
+.register-hint.is-valid {
+  min-height: 0;
+  margin: 0;
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.password-control .register-hint.is-valid {
+  right: 54px;
+}
+
+/* 满足要求后仅显示绿色圆形对号，不再重复输出“已符合要求”。 */
+.register-check {
+  width: 20px;
+  height: 20px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #ffffff;
+  background: var(--success);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.visually-hidden {
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  position: absolute;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.remember-password {
   width: fit-content;
   margin: -5px 0 18px;
   display: inline-flex;
@@ -206,7 +334,7 @@ body {
   cursor: pointer;
 }
 
-.password-toggle input {
+.remember-password input {
   width: 20px;
   min-height: 20px;
   height: 20px;
@@ -222,6 +350,7 @@ body {
   font-weight: 700;
 }
 
+/* ==================== 通用页面基础样式 ==================== */
 body {
   margin: 0;
   overflow-x: hidden;
@@ -238,6 +367,7 @@ textarea {
   font: inherit;
 }
 
+/* 登录后默认使用“左侧账号栏 + 右侧工作区”的后台布局。 */
 .app-shell {
   min-height: 100vh;
   display: grid;
@@ -281,6 +411,7 @@ textarea {
   font-size: 13px;
 }
 
+/* 通用面板，可用于登录表单、当前会话信息等需要明确边界的内容。 */
 .panel {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -301,6 +432,7 @@ textarea {
   flex-direction: column;
 }
 
+/* 工作区顶部栏固定在视口顶部，页面向下滚动时仍可看到当前页面标题。 */
 .topbar {
   min-height: 86px;
   padding: 22px 28px;
@@ -343,6 +475,7 @@ textarea {
   width: 100%;
 }
 
+/* ==================== 通用布局与卡片组件 ==================== */
 .grid {
   display: grid;
   gap: 16px;
@@ -381,6 +514,7 @@ textarea {
   font-size: 13px;
 }
 
+/* 表单字段统一使用“标签在上、控件在下”的纵向排列。 */
 .field {
   display: grid;
   gap: 7px;
@@ -431,6 +565,7 @@ textarea:focus {
   justify-content: flex-end;
 }
 
+/* 系统通用按钮；secondary、accent、danger、ghost 是不同语义的颜色变体。 */
 .btn {
   border: 1px solid transparent;
   border-radius: 6px;
@@ -523,6 +658,7 @@ textarea:focus {
   font-size: 26px;
 }
 
+/* 状态徽标同时显示文字和颜色，避免只依靠颜色传达状态。 */
 .badge {
   display: inline-flex;
   align-items: center;
@@ -554,6 +690,7 @@ textarea:focus {
   background: rgba(183, 55, 55, 0.08);
 }
 
+/* 表格在窄屏下允许横向滚动，防止列内容把整个页面撑出视口。 */
 .table-wrap {
   overflow-x: auto;
   border: 1px solid var(--line);
@@ -625,6 +762,7 @@ tr:last-child td {
   display: none !important;
 }
 
+/* 全局操作结果提示，固定在左下角并由 app.js 在 2.6 秒后隐藏。 */
 .toast {
   position: fixed;
   right: 20px;
@@ -662,6 +800,8 @@ tr:last-child td {
   margin: 14px 0;
 }
 
+/* ==================== 老人用户端 ====================
+   老人端使用更大的字号、按钮和更简单的页面结构，降低阅读与操作负担。 */
 .senior-session .btn {
   width: 100%;
   min-height: 48px;
@@ -789,19 +929,22 @@ tr:last-child td {
   box-shadow: 0 10px 28px rgba(37, 48, 44, 0.08);
 }
 
-.senior-entry:hover {
-  border-color: var(--primary);
-  background: #f8fbf8;
-}
-
-.senior-entry.primary {
+.senior-entry:hover,
+.senior-entry:focus,
+.senior-entry:active {
   border-color: var(--primary);
   background: var(--primary);
   color: #fff;
 }
 
-.senior-entry.primary:hover {
+.senior-entry:hover,
+.senior-entry:active {
   background: var(--primary-dark);
+}
+
+.senior-entry:focus-visible {
+  outline: 3px solid rgba(47, 111, 104, 0.24);
+  outline-offset: 3px;
 }
 
 .senior-entry-symbol {
@@ -816,7 +959,9 @@ tr:last-child td {
   font-weight: 700;
 }
 
-.senior-entry.primary .senior-entry-symbol {
+.senior-entry:hover .senior-entry-symbol,
+.senior-entry:focus .senior-entry-symbol,
+.senior-entry:active .senior-entry-symbol {
   background: rgba(255, 255, 255, 0.16);
   color: #fff;
 }
@@ -837,7 +982,9 @@ tr:last-child td {
   line-height: 1.5;
 }
 
-.senior-entry.primary small {
+.senior-entry:hover small,
+.senior-entry:focus small,
+.senior-entry:active small {
   color: rgba(255, 255, 255, 0.88);
 }
 
@@ -877,6 +1024,7 @@ tr:last-child td {
   color: var(--primary-dark);
 }
 
+/* 四步预约进度条：已到达的步骤由 active 类名高亮。 */
 .booking-progress {
   margin-bottom: 30px;
   display: grid;
@@ -920,6 +1068,7 @@ tr:last-child td {
   margin-bottom: 22px;
 }
 
+/* 服务、日期和护工均使用可直接点击的大块选项，避免依赖复杂下拉框。 */
 .service-choice-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -927,8 +1076,7 @@ tr:last-child td {
 }
 
 .service-choice,
-.date-choice,
-.staff-choice {
+.date-choice {
   border: 2px solid #d3dbd5;
   border-radius: 8px;
   background: #fff;
@@ -938,8 +1086,7 @@ tr:last-child td {
 }
 
 .service-choice:hover,
-.date-choice:hover,
-.staff-choice:hover {
+.date-choice:hover {
   border-color: var(--primary);
   background: #f7faf7;
 }
@@ -999,12 +1146,29 @@ tr:last-child td {
   font-size: 16px;
 }
 
+/* 日期卡片只负责选择；selected 表示用户当前准备确认的日期。 */
+.date-choice.selected {
+  border-color: var(--primary);
+  color: #fff;
+  background: var(--primary);
+  box-shadow: 0 10px 24px rgba(47, 111, 104, 0.18);
+}
+
+.date-choice.selected:hover {
+  background: var(--primary-dark);
+}
+
+.date-choice.selected strong,
+.date-choice.selected span {
+  color: #fff;
+}
+
 .custom-date-choice {
   margin-top: 22px;
   padding-top: 22px;
   border-top: 1px solid var(--line);
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.58fr);
   align-items: end;
   gap: 16px;
 }
@@ -1024,6 +1188,24 @@ tr:last-child td {
   font-size: 18px;
 }
 
+/*
+ * Edge/Chrome 会为空日期自动绘制 yyyy/mm/dd，聚焦时还会选中年份分段。
+ * 使用 opacity 同时隐藏普通和聚焦状态的日期编辑区，只保留独立的日历按钮。
+ */
+#bookingDate:invalid::-webkit-datetime-edit {
+  color: transparent !important;
+  opacity: 0;
+}
+
+#bookingDate:invalid:focus::-webkit-datetime-edit,
+#bookingDate:invalid::-webkit-datetime-edit-year-field,
+#bookingDate:invalid::-webkit-datetime-edit-month-field,
+#bookingDate:invalid::-webkit-datetime-edit-day-field,
+#bookingDate:invalid::-webkit-datetime-edit-text {
+  color: transparent !important;
+  background: transparent !important;
+}
+
 .senior-primary {
   min-height: 56px;
   padding: 12px 24px;
@@ -1031,19 +1213,55 @@ tr:last-child td {
   font-weight: 700;
 }
 
+/* 第二步只有这个按钮负责确认并前进，因此尺寸略大于日期输入框。 */
+.date-next-button {
+  width: 100%;
+  min-height: 64px;
+  padding: 15px 30px;
+  font-size: 19px;
+}
+
 .staff-choice-list {
   display: grid;
   gap: 14px;
+}
+
+.staff-choice-card {
+  width: 100%;
+  border: 2px solid #d3dbd5;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.staff-choice-card:hover {
+  border-color: var(--primary);
+}
+
+.staff-choice-card.selected {
+  border-color: var(--primary);
+  background: #f5f9f6;
+  box-shadow: 0 10px 24px rgba(47, 111, 104, 0.14);
 }
 
 .staff-choice {
   width: 100%;
   min-height: 96px;
   padding: 17px 20px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
   display: grid;
   grid-template-columns: 58px minmax(0, 1fr) auto;
   align-items: center;
   gap: 16px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.staff-choice:focus-visible {
+  outline: 3px solid rgba(47, 111, 104, 0.24);
+  outline-offset: -4px;
 }
 
 .staff-avatar {
@@ -1058,31 +1276,91 @@ tr:last-child td {
   font-weight: 700;
 }
 
-.staff-choice strong,
-.staff-choice small {
+.staff-choice-copy strong,
+.staff-choice-copy small {
   display: block;
 }
 
-.staff-choice strong {
+.staff-choice-copy strong {
   margin-bottom: 8px;
   font-size: 21px;
 }
 
-.staff-choice small {
+.staff-choice-copy small {
   color: var(--muted);
   font-size: 16px;
 }
 
-.staff-select {
-  min-width: 76px;
-  min-height: 48px;
-  border-radius: 6px;
-  background: var(--primary);
-  color: #fff;
+.staff-expand {
+  color: var(--primary);
+  font-size: 30px;
+  line-height: 1;
+  transition: transform 160ms ease;
+}
+
+.staff-choice-card.selected .staff-expand {
+  transform: rotate(180deg);
+}
+
+.staff-basic-info {
+  padding: 0 20px 20px 94px;
+}
+
+.staff-basic-info dl {
+  margin: 0;
+  padding: 17px 0;
+  border-top: 1px solid var(--line);
   display: grid;
-  place-items: center;
-  font-size: 17px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 28px;
+}
+
+.staff-basic-info dl > div {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.staff-basic-info dt {
+  color: var(--muted);
+}
+
+.staff-basic-info dd {
+  margin: 0;
   font-weight: 700;
+}
+
+.staff-basic-info > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.staff-confirm-bar {
+  margin-top: 22px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.58fr);
+  align-items: center;
+  gap: 18px;
+}
+
+.staff-confirm-bar p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 17px;
+}
+
+.staff-confirm-bar strong {
+  color: var(--text);
+  font-size: 19px;
+}
+
+.staff-next-button {
+  width: 100%;
+  min-height: 64px;
+  font-size: 19px;
 }
 
 .booking-summary {
@@ -1162,6 +1440,7 @@ tr:last-child td {
   font-weight: 700;
 }
 
+/* 老人预约记录使用纵向卡片，不采用信息密集的后台表格。 */
 .appointment-card-list {
   display: grid;
   gap: 16px;
@@ -1258,6 +1537,8 @@ tr:last-child td {
   font-size: 17px;
 }
 
+/* ==================== 护工工作台 ====================
+   围绕任务概况、接单状态、下一项任务和全部任务组织页面。 */
 .employee-workbench {
   width: min(1160px, 100%);
   margin: 0 auto;
@@ -1311,6 +1592,7 @@ tr:last-child td {
   font-size: 15px;
 }
 
+/* 接单状态开关。原生 checkbox 保存真实状态，轨道和圆点只负责视觉表现。 */
 .employee-status-switch {
   min-height: 74px;
   padding: 14px 16px;
@@ -1432,6 +1714,7 @@ tr:last-child td {
   font-size: 22px;
 }
 
+/* “下一项待服务任务”使用更醒目的卡片，帮助护工优先找到当前要处理的工作。 */
 .next-task-card {
   padding: 24px;
   border: 2px solid var(--primary);
@@ -1526,6 +1809,7 @@ tr:last-child td {
   gap: 4px;
 }
 
+/* 普通任务列表使用卡片排列，包含日期、服务对象、地址、状态和可用操作。 */
 .employee-task-list {
   display: grid;
   gap: 14px;
@@ -1624,6 +1908,419 @@ tr:last-child td {
   margin: 8px 0 0;
 }
 
+/* ==================== 护工培训与时间表 ====================
+   新护工按“学习、答题、设置时间”完成入职，所有控件保持清晰的大点击区域。 */
+.training-shell {
+  width: min(1040px, 100%);
+  margin: 0 auto;
+}
+
+.training-progress {
+  margin: 0 0 34px;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.training-progress li {
+  position: relative;
+  min-width: 0;
+  padding-top: 18px;
+  border-top: 4px solid #d8dfda;
+  color: #78847e;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.training-progress li + li {
+  margin-left: 10px;
+}
+
+.training-progress li.active,
+.training-progress li.done {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.training-progress li span {
+  width: 31px;
+  height: 31px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.training-progress li.done span {
+  color: #fff;
+  background: var(--primary);
+}
+
+.training-progress li strong {
+  overflow: hidden;
+  font-size: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.training-intro {
+  margin-bottom: 24px;
+}
+
+.training-intro p {
+  margin: 0 0 7px;
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.training-intro h3 {
+  margin: 0 0 10px;
+  font-size: 30px;
+}
+
+.training-intro span {
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.training-module-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.training-module {
+  min-height: 178px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: start;
+  gap: 17px;
+  box-shadow: 0 8px 24px rgba(37, 48, 44, 0.06);
+}
+
+.training-module-number {
+  width: 52px;
+  height: 52px;
+  border-radius: 8px;
+  background: #e7f0eb;
+  color: var(--primary);
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+}
+
+.training-module h4 {
+  margin: 1px 0 9px;
+  font-size: 20px;
+}
+
+.training-module p {
+  margin: 0;
+  color: #58665f;
+  font-size: 16px;
+  line-height: 1.75;
+}
+
+.training-complete-bar,
+.quiz-submit-bar {
+  margin-top: 24px;
+  padding: 20px 22px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7faf7;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.training-complete-bar label {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.training-complete-bar input {
+  width: 24px;
+  height: 24px;
+  accent-color: var(--primary);
+}
+
+.training-primary {
+  min-height: 52px;
+  padding-inline: 26px;
+  font-size: 17px;
+}
+
+.quiz-result {
+  margin-bottom: 18px;
+  padding: 16px 18px;
+  border-left: 5px solid var(--danger);
+  border-radius: 6px;
+  background: #fff1f1;
+}
+
+.quiz-result strong,
+.quiz-result span {
+  display: block;
+}
+
+.quiz-result strong {
+  margin-bottom: 5px;
+  color: var(--danger);
+}
+
+.quiz-result span {
+  color: #6a5353;
+}
+
+.training-quiz {
+  display: grid;
+  gap: 16px;
+}
+
+.training-question {
+  min-width: 0;
+  margin: 0;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.training-question legend {
+  width: 100%;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.training-question legend span {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.training-options {
+  margin-top: 18px;
+  display: grid;
+  gap: 10px;
+}
+
+.training-options label {
+  cursor: pointer;
+}
+
+.training-options input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.training-options label > span {
+  min-height: 52px;
+  padding: 11px 14px;
+  border: 2px solid #d5ddd7;
+  border-radius: 7px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 16px;
+}
+
+.training-options b {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #eef2ef;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.training-options input:checked + span {
+  border-color: var(--primary);
+  background: #edf6f1;
+  color: #204f49;
+}
+
+.training-options input:checked + span b {
+  background: var(--primary);
+  color: #fff;
+}
+
+.training-options input:focus-visible + span {
+  outline: 3px solid rgba(47, 111, 104, 0.2);
+  outline-offset: 2px;
+}
+
+.quiz-submit-bar {
+  margin-top: 2px;
+}
+
+.quiz-submit-bar span {
+  color: var(--muted);
+}
+
+/* 时间表默认是白色；护工选中后才使用绿色，便于快速确认已选时段。 */
+.employee-availability {
+  margin-top: 24px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(37, 48, 44, 0.06);
+}
+
+.employee-availability .training-progress {
+  margin: 18px 0 24px;
+}
+
+.availability-note {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.availability-grid {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: 132px repeat(3, minmax(150px, 1fr));
+}
+
+.availability-grid > * {
+  min-width: 0;
+  min-height: 58px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.availability-grid > :nth-child(4n) {
+  border-right: 0;
+}
+
+.availability-grid > :nth-last-child(-n + 4) {
+  border-bottom: 0;
+}
+
+.availability-corner,
+.availability-heading,
+.availability-day {
+  padding: 10px 12px;
+  background: #f2f5f2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.availability-corner,
+.availability-day {
+  font-weight: 800;
+}
+
+.availability-heading {
+  flex-direction: column;
+}
+
+.availability-heading strong,
+.availability-heading small {
+  display: block;
+}
+
+.availability-heading small {
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.availability-slot {
+  position: relative;
+  padding: 7px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.availability-slot input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.availability-slot span {
+  width: 100%;
+  min-height: 44px;
+  border: 2px solid #d5ddd7;
+  border-radius: 6px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.availability-slot b {
+  display: none;
+}
+
+.availability-slot input:checked + span {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.availability-slot input:checked + span b {
+  display: inline;
+}
+
+.availability-slot input:focus-visible + span {
+  outline: 3px solid rgba(47, 111, 104, 0.2);
+  outline-offset: 2px;
+}
+
+.availability-save {
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+}
+
+.availability-save > span {
+  color: var(--muted);
+}
+
+.availability-save strong {
+  color: var(--primary);
+}
+
+/* ==================== 响应式布局 ====================
+   中等屏幕下收窄或改为单列，保证登录页和业务卡片不会互相挤压。 */
 @media (max-width: 980px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -1676,8 +2373,13 @@ tr:last-child td {
   .employee-overview {
     grid-template-columns: 1fr;
   }
+
+  .training-module-list {
+    grid-template-columns: 1fr;
+  }
 }
 
+/* 手机屏幕下进一步放大可点击区域，并让工具栏、表单和任务操作纵向排列。 */
 @media (max-width: 620px) {
   .content,
   .topbar,
@@ -1833,7 +2535,7 @@ tr:last-child td {
 
   .staff-choice {
     padding: 15px;
-    grid-template-columns: 50px minmax(0, 1fr);
+    grid-template-columns: 50px minmax(0, 1fr) 24px;
   }
 
   .staff-avatar {
@@ -1841,9 +2543,17 @@ tr:last-child td {
     height: 50px;
   }
 
-  .staff-select {
-    min-height: 44px;
-    grid-column: 1 / -1;
+  .staff-basic-info {
+    padding: 0 15px 16px;
+  }
+
+  .staff-basic-info dl {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .staff-confirm-bar {
+    grid-template-columns: 1fr;
   }
 
   .booking-summary {
@@ -1915,5 +2625,64 @@ tr:last-child td {
 
   .employee-task-actions .btn {
     width: 100%;
+  }
+
+  .training-progress {
+    margin-bottom: 26px;
+  }
+
+  .training-progress li {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .training-progress li strong {
+    font-size: 13px;
+  }
+
+  .training-intro h3 {
+    font-size: 25px;
+  }
+
+  .training-module {
+    padding: 18px 15px;
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .training-module-number {
+    width: 44px;
+    height: 44px;
+  }
+
+  .training-complete-bar,
+  .quiz-submit-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .training-complete-bar .btn,
+  .quiz-submit-bar .btn {
+    width: 100%;
+  }
+
+  .training-question {
+    padding: 18px 14px;
+  }
+
+  .employee-availability {
+    padding: 20px 14px;
+  }
+
+  .employee-availability form {
+    overflow-x: auto;
+  }
+
+  .availability-grid {
+    min-width: 680px;
+  }
+
+  .availability-save {
+    min-width: 680px;
+    justify-content: space-between;
   }
 }

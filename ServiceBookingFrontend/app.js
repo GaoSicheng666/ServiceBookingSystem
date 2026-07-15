@@ -1,10 +1,20 @@
+/* ==================== 系统配置与运行状态 ==================== */
+
+// 后端 REST API 的固定根地址。后续请求只需要传入 /auth/login 等相对路径。
 const DEFAULT_API_BASE = "http://121.40.96.66:8080/api";
 
+/*
+ * 全局状态对象，是这个单页应用的数据中心。
+ * token、role、name 根据“记住密码”选择从 localStorage 或 sessionStorage 恢复；
+ * 其余字段记录当前选中的页面、筛选条件和预约步骤；data 保存后端返回的数据。
+ */
 const state = {
   apiBase: DEFAULT_API_BASE,
-  token: localStorage.getItem("eldercare.token") || "",
-  role: localStorage.getItem("eldercare.role") || "",
-  name: localStorage.getItem("eldercare.name") || "",
+  token: localStorage.getItem("eldercare.token") || sessionStorage.getItem("eldercare.token") || "",
+  role: localStorage.getItem("eldercare.role") || sessionStorage.getItem("eldercare.role") || "",
+  name: localStorage.getItem("eldercare.name") || sessionStorage.getItem("eldercare.name") || "",
+  rememberPassword: localStorage.getItem("eldercare.rememberPassword") === "true",
+  rememberedUsername: localStorage.getItem("eldercare.rememberedUsername") || "",
   authMode: "login",
   activeAdminTab: "services",
   appointmentsFilter: "",
@@ -14,9 +24,14 @@ const state = {
   selectedDate: today(),
   selectedServiceId: "",
   selectedEmployeeId: "",
+  employeeQuizResult: null,
   data: {}
 };
 
+/*
+ * 缓存 index.html 中长期存在的节点，避免每次渲染都重复查询 DOM。
+ * 动态生成的表单、卡片和按钮不放在这里，而是通过事件委托统一处理。
+ */
 const el = {
   app: document.getElementById("app"),
   authPanel: document.getElementById("authPanel"),
@@ -28,11 +43,20 @@ const el = {
   toast: document.getElementById("toast")
 };
 
+/* ==================== 全局事件委托 ====================
+ * 页面大部分内容由 innerHTML 动态生成，因此不能只在启动时给每个按钮单独绑定事件。
+ * 这里把 submit、click、change 事件统一监听在 document 上，再通过 data-* 属性判断业务动作。
+ */
+
+// 统一处理登录、注册和管理员新增服务表单。
 document.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.target;
   const action = form.dataset.submit;
   if (!action) return;
+  // 注册表单提交前再完整校验一次，防止用户没有逐个聚焦字段就直接提交。
+  if (action === "register" && !validateRegisterForm(form)) return;
+  // 必须在禁用表单控件之前读取数据；被 disabled 的控件不会进入 FormData。
   const payload = formData(form);
 
   try {
@@ -40,6 +64,8 @@ document.addEventListener("submit", async (event) => {
     if (action === "login") await login(payload);
     if (action === "register") await register(payload);
     if (action === "create-service") await createService(payload);
+    if (action === "employee-quiz") await submitEmployeeQuiz(payload);
+    if (action === "employee-schedule") await saveEmployeeAvailability(form);
   } catch (error) {
     notify(error.message, "error");
   } finally {
@@ -47,6 +73,11 @@ document.addEventListener("submit", async (event) => {
   }
 });
 
+/*
+ * 统一处理带 data-action 属性的按钮。
+ * 每个分支只负责调用对应业务函数；try/catch 负责把错误显示成页面提示，
+ * finally 则恢复按钮状态，防止网络请求期间重复点击。
+ */
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-action]");
   if (!button) return;
@@ -57,6 +88,10 @@ document.addEventListener("click", async (event) => {
     if (action === "switch-auth") {
       state.authMode = button.dataset.mode;
       renderAuth();
+      return;
+    }
+    if (action === "toggle-password") {
+      togglePasswordVisibility(button);
       return;
     }
     if (action === "logout") {
@@ -92,15 +127,19 @@ document.addEventListener("click", async (event) => {
       return;
     }
     if (action === "select-date") {
-      await selectBookingDate(button.dataset.date);
+      selectBookingDate(button.dataset.date);
       return;
     }
     if (action === "use-custom-date") {
-      await selectBookingDate(state.selectedDate);
+      await confirmBookingDate();
       return;
     }
     if (action === "choose-employee") {
       chooseBookingEmployee(button.dataset.employeeId);
+      return;
+    }
+    if (action === "confirm-employee") {
+      confirmBookingEmployee();
       return;
     }
     if (action === "confirm-booking") {
@@ -121,6 +160,10 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "employee-status") {
       await updateEmployeeStatus(button.dataset.working === "true");
+      return;
+    }
+    if (action === "complete-training") {
+      await completeEmployeeTraining();
       return;
     }
     if (action === "employee-view") {
@@ -168,6 +211,10 @@ document.addEventListener("click", async (event) => {
       await toggleEmployee(button.dataset.id, button.dataset.active === "true");
       return;
     }
+    if (action === "grant-employee-training") {
+      await grantEmployeeTraining(button.dataset.id);
+      return;
+    }
     if (action === "delete-employee") {
       await deleteEmployee(button.dataset.id);
     }
@@ -178,12 +225,12 @@ document.addEventListener("click", async (event) => {
   }
 });
 
+/*
+ * 统一处理输入控件变化：护工接单状态、注册角色、日期和预约筛选等。
+ * 护工状态切换失败时会把开关恢复为原值，保证界面与后端数据一致。
+ */
 document.addEventListener("change", async (event) => {
   const target = event.target;
-  if (target.matches("[data-password-toggle]")) {
-    const password = target.closest("form")?.querySelector('input[name="password"]');
-    if (password) password.type = target.checked ? "text" : "password";
-  }
   if (target.id === "employeeWorkingToggle") {
     target.disabled = true;
     try {
@@ -195,9 +242,21 @@ document.addEventListener("change", async (event) => {
       target.disabled = false;
     }
   }
+  if (target.id === "trainingAcknowledge") {
+    const completeButton = document.getElementById("completeTrainingButton");
+    if (completeButton) completeButton.disabled = !target.checked;
+  }
+  if (target.matches('form[data-submit="employee-schedule"] input[name="slot"]')) {
+    const scheduleForm = target.closest("form");
+    const counter = scheduleForm.querySelector("[data-availability-count]");
+    if (counter) counter.textContent = scheduleForm.querySelectorAll('input[name="slot"]:checked').length;
+  }
   if (target.id === "registerRole") renderRegisterRoleFields(target.value);
   if (target.id === "serviceSelect") state.selectedServiceId = target.value;
-  if (target.id === "bookingDate") state.selectedDate = target.value || today();
+  if (target.id === "bookingDate") {
+    state.selectedDate = target.value;
+    renderUserDashboard();
+  }
   if (target.id === "appointmentFilter") {
     state.appointmentsFilter = target.value;
     await refreshDashboard();
@@ -209,9 +268,56 @@ document.addEventListener("change", async (event) => {
   }
 });
 
+/*
+ * 注册输入提示使用 focusin 和 input 事件委托：
+ * - 刚选中输入框时显示该字段的完整要求；
+ * - 输入后根据当前内容显示还差多少或哪项格式不正确。
+ */
+document.addEventListener("focusin", (event) => {
+  if (event.target.matches("[data-register-rule]")) {
+    updateRegisterHint(event.target, true);
+  }
+});
+
+document.addEventListener("input", (event) => {
+  if (event.target.matches("[data-register-rule]")) {
+    updateRegisterHint(event.target, true);
+    // 原密码改变后立即重新检查确认密码，避免旧的绿色对号继续表示两次密码一致。
+    if (event.target.name === "password") {
+      const confirmInput = event.target.form?.querySelector('input[name="confirmPassword"]');
+      const confirmHint = confirmInput?.closest(".field")?.querySelector("[data-register-hint]");
+      if (confirmInput && (confirmInput.value || (confirmHint && !confirmHint.hidden))) {
+        updateRegisterHint(confirmInput, true);
+      }
+    }
+  }
+});
+
+// 中文输入法选词期间会临时产生拼音字符，此时保持“输入尚未完成”，避免提前显示绿色对号。
+document.addEventListener("compositionstart", (event) => {
+  if (event.target.matches("[data-register-rule]")) {
+    event.target.dataset.composing = "true";
+    updateRegisterHint(event.target, true);
+  }
+});
+
+document.addEventListener("compositionend", (event) => {
+  if (event.target.matches("[data-register-rule]")) {
+    delete event.target.dataset.composing;
+    updateRegisterHint(event.target, true);
+  }
+});
+
+/* ==================== 应用启动 ==================== */
+
+// 先绘制当前页面；如果本地已有令牌，再向后端刷新一次真实数据。
 render();
 if (state.token) refreshDashboard().catch((error) => notify(error.message, "error"));
 
+/**
+ * 根据当前登录状态绘制页面固定部分。
+ * 未登录时清空工作区，已登录时具体业务页面由 refreshDashboard 负责加载。
+ */
 function render() {
   syncLayout();
   renderAuth();
@@ -223,6 +329,10 @@ function render() {
   }
 }
 
+/**
+ * 渲染登录或注册表单。
+ * state.authMode 决定当前表单；管理员没有公开注册入口，只能由后端预置管理员账号。
+ */
 function renderAuth() {
   if (state.token) {
     el.authPanel.classList.add("hidden");
@@ -242,17 +352,55 @@ function renderAuth() {
       <form data-submit="register">
         <label class="field">
           <span>角色</span>
-          <select id="registerRole" name="role">
+          <select id="registerRole" name="role" required>
             <option value="USER">老人用户</option>
             <option value="EMPLOYEE">护工员工</option>
           </select>
         </label>
-        <label class="field"><span>用户名</span><input name="username" required autocomplete="username" placeholder="请输入用户名"></label>
-        <label class="field"><span>密码</span><input name="password" type="password" required autocomplete="new-password" placeholder="请输入密码"></label>
-        <label class="password-toggle"><input type="checkbox" data-password-toggle>显示密码</label>
-        <label class="field"><span>姓名</span><input name="name" required placeholder="请输入真实姓名"></label>
-        <label class="field"><span>联系电话</span><input name="phone" type="tel" required inputmode="tel" placeholder="请输入联系电话"></label>
-        <label class="field"><span>年龄</span><input name="age" type="number" min="1" max="120" required placeholder="请输入年龄"></label>
+        <label class="field">
+          <span>用户名</span>
+          <div class="register-control">
+            <input name="username" data-register-rule="username" minlength="2" maxlength="20" required autocomplete="username" aria-describedby="register-hint-username" placeholder="请输入用户名">
+            ${registerHint("username")}
+          </div>
+        </label>
+        <label class="field">
+          <span>密码</span>
+          <div class="register-control password-control">
+            <input name="password" data-register-rule="password" type="password" minlength="6" maxlength="20" required autocomplete="new-password" aria-describedby="register-hint-password" placeholder="请输入密码">
+            ${passwordEyeButton()}
+            ${registerHint("password")}
+          </div>
+        </label>
+        <label class="field">
+          <span>确认密码</span>
+          <div class="register-control password-control">
+            <input name="confirmPassword" data-register-rule="confirmPassword" type="password" minlength="6" maxlength="20" required autocomplete="new-password" aria-describedby="register-hint-confirm-password" placeholder="请再次输入密码">
+            ${passwordEyeButton()}
+            ${registerHint("confirm-password")}
+          </div>
+        </label>
+        <label class="field">
+          <span>姓名</span>
+          <div class="register-control">
+            <input name="name" data-register-rule="name" minlength="2" maxlength="20" required aria-describedby="register-hint-name" placeholder="请输入真实姓名">
+            ${registerHint("name")}
+          </div>
+        </label>
+        <label class="field">
+          <span>联系电话</span>
+          <div class="register-control">
+            <input name="phone" data-register-rule="phone" type="tel" minlength="6" maxlength="20" required inputmode="numeric" autocomplete="tel" aria-describedby="register-hint-phone" placeholder="请输入联系电话">
+            ${registerHint("phone")}
+          </div>
+        </label>
+        <label class="field">
+          <span>年龄</span>
+          <div class="register-control">
+            <input name="age" data-register-rule="age" type="number" min="1" max="120" required inputmode="numeric" aria-describedby="register-hint-age" placeholder="请输入年龄">
+            ${registerHint("age")}
+          </div>
+        </label>
         <div id="roleFields"></div>
         <button class="btn auth-submit" type="submit">完成注册</button>
       </form>
@@ -271,14 +419,25 @@ function renderAuth() {
       <button class="tab" type="button" role="tab" aria-selected="false" data-action="switch-auth" data-mode="register">注册</button>
     </div>
     <form data-submit="login">
-      <label class="field"><span>用户名</span><input name="username" required autocomplete="username" placeholder="请输入用户名"></label>
-      <label class="field"><span>密码</span><input name="password" type="password" required autocomplete="current-password" placeholder="请输入密码"></label>
-      <label class="password-toggle"><input type="checkbox" data-password-toggle>显示密码</label>
+      <label class="field"><span>用户名</span><input name="username" value="${attr(state.rememberedUsername)}" required autocomplete="username" placeholder="请输入用户名"></label>
+      <label class="field">
+        <span>密码</span>
+        <div class="password-control">
+          <input name="password" type="password" required autocomplete="current-password" placeholder="请输入密码">
+          ${passwordEyeButton()}
+        </div>
+      </label>
+      <label class="remember-password"><input name="rememberPassword" type="checkbox" ${state.rememberPassword ? "checked" : ""}>记住密码</label>
       <button class="btn auth-submit" type="submit">立即登录</button>
     </form>
   `;
 }
 
+/**
+ * 根据注册角色补充差异字段。
+ * 老人用户填写居住地址；护工填写薪资要求且年龄下限调整为 18 岁。
+ * @param {string} role 后端约定的角色值：USER 或 EMPLOYEE。
+ */
 function renderRegisterRoleFields(role) {
   const box = document.getElementById("roleFields");
   if (!box) return;
@@ -288,12 +447,175 @@ function renderRegisterRoleFields(role) {
     ageInput.placeholder = role === "EMPLOYEE" ? "护工年龄需满18岁" : "请输入年龄";
   }
   if (role === "EMPLOYEE") {
-    box.innerHTML = `<label class="field"><span>薪资要求</span><input name="salary" type="number" min="0" step="0.01" required placeholder="请输入薪资要求"></label>`;
+    box.innerHTML = `
+      <label class="field">
+        <span>薪资要求</span>
+        <div class="register-control">
+          <input name="salary" data-register-rule="salary" type="number" min="0" step="0.01" required inputmode="decimal" aria-describedby="register-hint-salary" placeholder="请输入薪资要求">
+          ${registerHint("salary")}
+        </div>
+      </label>`;
   } else {
-    box.innerHTML = `<label class="field"><span>居住地址</span><textarea name="address" required placeholder="请输入详细居住地址"></textarea></label>`;
+    box.innerHTML = `
+      <label class="field">
+        <span>居住地址</span>
+        <div class="register-control">
+          <textarea name="address" data-register-rule="address" maxlength="255" required aria-describedby="register-hint-address" placeholder="请输入详细居住地址"></textarea>
+          ${registerHint("address")}
+        </div>
+      </label>`;
   }
+
+  // 切换老人/护工角色后，年龄最低要求也会变化；若提示已经显示则立即同步内容。
+  if (ageInput) updateRegisterHint(ageInput, false);
 }
 
+/** 为注册字段生成初始隐藏的提示容器，具体文字由 updateRegisterHint 动态写入。 */
+function registerHint(name) {
+  return `<small id="register-hint-${name}" class="register-hint" data-register-hint="${name}" aria-live="polite" hidden></small>`;
+}
+
+/**
+ * 生成密码框右侧的小眼睛按钮。图形采用 Lucide Eye 图标的路径，按钮不参与表单提交。
+ */
+function passwordEyeButton() {
+  return `
+    <button class="password-eye" type="button" data-action="toggle-password" aria-label="显示密码" aria-pressed="false" title="显示密码">
+      ${passwordEyeIcon(false)}
+    </button>`;
+}
+
+/** 根据当前密码可见状态返回 Lucide Eye 或 Eye Off 图标。 */
+function passwordEyeIcon(visible) {
+  if (visible) {
+    return `<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 2 20 20"/><path d="M6.71 6.71C4.23 8.1 2.73 10.17 2 12c1.73 4.39 5.73 7 10 7 1.42 0 2.79-.29 4.03-.84"/><path d="M10.73 5.08A10.8 10.8 0 0 1 12 5c4.27 0 8.27 2.61 10 7a11.6 11.6 0 0 1-2.2 3.19"/><path d="M14.12 14.12a3 3 0 0 1-4.24-4.24"/></svg>`;
+  }
+  return `<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.06 12.35a1 1 0 0 1 0-.7C3.79 7.26 7.73 5 12 5s8.21 2.26 9.94 6.65a1 1 0 0 1 0 .7C20.21 16.74 16.27 19 12 19S3.79 16.74 2.06 12.35Z"/><circle cx="12" cy="12" r="3"/></svg>`;
+}
+
+/** 切换当前按钮所属密码框的明文/密文状态，并同步图标和无障碍说明。 */
+function togglePasswordVisibility(button) {
+  const input = button.closest(".password-control")?.querySelector('input[type="password"], input[type="text"]');
+  if (!input) return;
+  const visible = input.type === "password";
+  input.type = visible ? "text" : "password";
+  button.innerHTML = passwordEyeIcon(visible);
+  button.setAttribute("aria-pressed", String(visible));
+  button.setAttribute("aria-label", visible ? "隐藏密码" : "显示密码");
+  button.title = visible ? "隐藏密码" : "显示密码";
+  input.focus();
+}
+
+/**
+ * 根据字段类型和当前输入计算提示内容。
+ * 未满足时返回一条可独立阅读的红色提示；valid=true 时界面只显示绿色对号。
+ */
+function registerFieldFeedback(input) {
+  const rule = input.dataset.registerRule;
+  const rawValue = input.value;
+  const value = rawValue.trim();
+
+  if (input.dataset.composing === "true") {
+    return { message: "请先完成文字输入", valid: false };
+  }
+
+  if (rule === "username") {
+    if (!value) return { message: "请输入2-20个字符，可使用中文、字母、数字和下划线", valid: false };
+    if (value.length < 2) return { message: `还需输入${2 - value.length}个字符`, valid: false };
+    if (!/^[\p{Script=Han}A-Za-z0-9_]+$/u.test(value)) return { message: "只能使用中文、字母、数字和下划线", valid: false };
+    return { message: "已符合要求", valid: true };
+  }
+
+  if (rule === "password") {
+    if (!rawValue) return { message: "请输入6-20个字符，并同时包含字母和数字", valid: false };
+    if (rawValue.length < 6) return { message: `还需输入${6 - rawValue.length}个字符`, valid: false };
+    const missing = [];
+    if (!/[A-Za-z]/.test(rawValue)) missing.push("字母");
+    if (!/\d/.test(rawValue)) missing.push("数字");
+    if (missing.length) return { message: `还需包含${missing.join("和")}`, valid: false };
+    return { message: "已符合要求", valid: true };
+  }
+
+  if (rule === "confirmPassword") {
+    const password = input.form?.querySelector('input[name="password"]')?.value || "";
+    if (!rawValue) return { message: "请再次输入密码", valid: false };
+    if (rawValue !== password) return { message: "两次输入的密码不一致", valid: false };
+    return { message: "已符合要求", valid: true };
+  }
+
+  if (rule === "name") {
+    if (!value) return { message: "请输入2-20个汉字，可使用间隔号", valid: false };
+    if (value.length < 2) return { message: `还需输入${2 - value.length}个汉字`, valid: false };
+    if (!/^[\p{Script=Han}·]+$/u.test(value)) return { message: "请先把拼音转换为汉字，姓名只能使用汉字和间隔号", valid: false };
+    return { message: "已符合要求", valid: true };
+  }
+
+  if (rule === "phone") {
+    if (!value) return { message: "请输入6-20位数字", valid: false };
+    if (!/^\d+$/.test(value)) return { message: "只能输入数字，不能包含空格或符号", valid: false };
+    if (value.length < 6) return { message: `还需输入${6 - value.length}位数字`, valid: false };
+    return { message: "已符合要求", valid: true };
+  }
+
+  if (rule === "age") {
+    const role = document.getElementById("registerRole")?.value;
+    const minimum = role === "EMPLOYEE" ? 18 : 1;
+    const roleLabel = role === "EMPLOYEE" ? "护工" : "老人用户";
+    if (!value) return { message: `请输入${roleLabel}年龄，范围为${minimum}-120岁`, valid: false };
+    const age = Number(value);
+    if (!Number.isInteger(age)) return { message: "年龄必须填写整数", valid: false };
+    if (age < minimum) return { message: `年龄需达到${minimum}岁`, valid: false };
+    if (age > 120) return { message: "年龄不能超过120岁", valid: false };
+    return { message: "已符合要求", valid: true };
+  }
+
+  if (rule === "address") {
+    if (!value) return { message: "请填写能够联系到您的详细居住地址", valid: false };
+    if (value.length < 5) return { message: `还需补充${5 - value.length}个字符`, valid: false };
+    if (!/^[\p{Script=Han}\d\s\-—（）()、，,.]+$/u.test(value)) return { message: "请先把拼音转换为汉字，可使用汉字、数字和常用地址符号", valid: false };
+    return { message: "已符合要求", valid: true };
+  }
+
+  if (rule === "salary") {
+    if (!value) return { message: "请输入不小于0的金额", valid: false };
+    if (Number(value) < 0) return { message: "薪资不能小于0元", valid: false };
+    return { message: "已符合要求", valid: true };
+  }
+
+  return { message: "请检查输入内容是否正确", valid: false };
+}
+
+/** 更新一个注册输入框下方的提示，并同步浏览器原生表单有效状态。 */
+function updateRegisterHint(input, reveal = true) {
+  const hint = input.closest(".field")?.querySelector("[data-register-hint]");
+  if (!hint) return true;
+  const feedback = registerFieldFeedback(input);
+  if (reveal) hint.hidden = false;
+  hint.classList.toggle("is-valid", feedback.valid);
+  hint.innerHTML = feedback.valid
+    ? `<span class="register-check" aria-hidden="true">✓</span><span class="visually-hidden">已符合要求</span>`
+    : `<strong>${escapeHtml(feedback.message)}</strong>`;
+  input.setCustomValidity(feedback.valid ? "" : feedback.message);
+  return feedback.valid;
+}
+
+/** 校验当前注册表单中的所有可见字段，并把焦点移到第一项未满足要求的输入框。 */
+function validateRegisterForm(form) {
+  const inputs = Array.from(form.querySelectorAll("[data-register-rule]"));
+  const valid = inputs.map((input) => updateRegisterHint(input, true));
+  const firstInvalid = inputs.find((input, index) => !valid[index]);
+  if (firstInvalid) {
+    firstInvalid.focus();
+    form.reportValidity();
+    return false;
+  }
+  return true;
+}
+
+/**
+ * 渲染已登录账号区域。
+ * 老人端只保留返回首页与退出，护工和管理员额外提供刷新数据按钮。
+ */
 function renderSession() {
   syncLayout();
   if (!state.token) {
@@ -325,25 +647,58 @@ function renderSession() {
   `;
 }
 
+/**
+ * 把 JavaScript 登录状态同步为根节点类名，供 CSS 切换三种布局。
+ * is-authenticated 表示已登录，is-senior 表示当前是老人用户。
+ */
 function syncLayout() {
   el.app.classList.toggle("is-authenticated", Boolean(state.token));
   el.app.classList.toggle("is-senior", Boolean(state.token) && state.role === "USER");
 }
 
+/**
+ * 调用登录接口并保存会话。
+ * 勾选“记住密码”时将 JWT 会话写入 localStorage，否则只写入 sessionStorage；
+ * 前端不会保存明文密码，登录状态的最长时间仍由后端 JWT 有效期决定。
+ * @param {Object} body 登录表单中的 username 和 password。
+ */
 async function login(body) {
+  const rememberPassword = body.rememberPassword === "on";
+  const username = body.username;
+  delete body.rememberPassword;
   const res = await api("/auth/login", { method: "POST", body });
   state.token = res.token;
   state.role = res.role;
   state.name = res.name;
-  localStorage.setItem("eldercare.token", state.token);
-  localStorage.setItem("eldercare.role", state.role);
-  localStorage.setItem("eldercare.name", state.name);
+  state.rememberPassword = rememberPassword;
+  state.rememberedUsername = rememberPassword ? username : "";
+
+  clearStoredSession();
+  const storage = rememberPassword ? localStorage : sessionStorage;
+  storage.setItem("eldercare.token", state.token);
+  storage.setItem("eldercare.role", state.role);
+  storage.setItem("eldercare.name", state.name);
+
+  if (rememberPassword) {
+    localStorage.setItem("eldercare.rememberPassword", "true");
+    localStorage.setItem("eldercare.rememberedUsername", username);
+  } else {
+    localStorage.removeItem("eldercare.rememberPassword");
+    localStorage.removeItem("eldercare.rememberedUsername");
+  }
   renderSession();
   notify("登录成功", "success");
   await refreshDashboard();
 }
 
+/**
+ * 注册老人或护工账号。
+ * number 类型的表单值默认是字符串，因此提交前把年龄和薪资显式转换为数字。
+ * @param {Object} body 注册表单收集到的用户资料。
+ */
 async function register(body) {
+  // 确认密码只用于浏览器端比较，不属于后端注册 DTO，提交前必须移除。
+  delete body.confirmPassword;
   body.age = Number(body.age);
   if (body.salary !== undefined) body.salary = Number(body.salary);
   await api("/auth/register", { method: "POST", body, auth: false });
@@ -352,6 +707,10 @@ async function register(body) {
   renderAuth();
 }
 
+/**
+ * 清除前端会话和临时业务状态，并返回登录页。
+ * 这里只清理当前浏览器中的 JWT，不会删除后端账号、业务数据或浏览器密码管理器中的信息。
+ */
 function logout() {
   state.token = "";
   state.role = "";
@@ -362,13 +721,25 @@ function logout() {
   state.employeeView = "today";
   state.bookingStep = 1;
   state.selectedEmployeeId = "";
-  localStorage.removeItem("eldercare.token");
-  localStorage.removeItem("eldercare.role");
-  localStorage.removeItem("eldercare.name");
+  clearStoredSession();
   render();
   notify("已退出登录", "success");
 }
 
+/**
+ * 同时清理持久会话和当前标签会话，避免切换“记住密码”设置后留下两份互相冲突的 JWT。
+ */
+function clearStoredSession() {
+  ["eldercare.token", "eldercare.role", "eldercare.name"].forEach((key) => {
+    localStorage.removeItem(key);
+    sessionStorage.removeItem(key);
+  });
+}
+
+/**
+ * 当前角色工作台的统一刷新入口。
+ * 先调用角色对应的数据加载函数，再更新会话区域和业务内容，避免三个角色重复刷新逻辑。
+ */
 async function refreshDashboard() {
   if (!state.token) {
     render();
@@ -383,6 +754,11 @@ async function refreshDashboard() {
   if (state.role === "ADMIN") renderAdminDashboard();
 }
 
+/* ==================== 老人用户端 ====================
+ * 老人端只展示完成预约所必需的信息，并把预约拆成“服务、日期、人员、确认”四步。
+ */
+
+/** 同时加载老人资料、可预约服务和本人的预约记录，并写入 state.data。 */
 async function loadUserDashboard() {
   const [me, services, appointments] = await Promise.all([
     api("/users/me"),
@@ -394,6 +770,10 @@ async function loadUserDashboard() {
   state.data.userAppointments = appointments;
 }
 
+/**
+ * 根据已选日期查询当天可预约的护工。
+ * @param {boolean} showMessage 是否在查询完成后显示成功提示。
+ */
 async function loadAvailableEmployees(showMessage = true) {
   const date = state.selectedDate || today();
   const employees = await api(`/employees/available?date=${encodeURIComponent(date)}`);
@@ -401,6 +781,10 @@ async function loadAvailableEmployees(showMessage = true) {
   if (showMessage) notify("服务人员已更新", "success");
 }
 
+/**
+ * 老人端总渲染入口。
+ * 根据 userView 在服务首页、四步预约和预约记录之间切换，不会同时堆叠多个流程。
+ */
 function renderUserDashboard() {
   const user = state.data.user || {};
   const services = state.data.services || [];
@@ -427,7 +811,7 @@ function renderUserDashboard() {
         <h3>请选择您要办理的事情</h3>
       </section>
       <div class="senior-entry-list">
-        <button class="senior-entry primary" type="button" data-action="start-booking">
+        <button class="senior-entry" type="button" data-action="start-booking">
           <span class="senior-entry-symbol" aria-hidden="true">＋</span>
           <span><strong>立即预约服务</strong><small>选择服务、日期和服务人员</small></span>
           <span class="senior-entry-arrow" aria-hidden="true">›</span>
@@ -442,15 +826,18 @@ function renderUserDashboard() {
   `;
 }
 
+/** 进入新的预约流程，并清空上一次尚未提交的服务和护工选择。 */
 function startBooking() {
   state.userView = "booking";
   state.bookingStep = 1;
   state.selectedServiceId = "";
+  state.selectedDate = "";
   state.selectedEmployeeId = "";
   state.data.availableEmployees = [];
   renderUserDashboard();
 }
 
+/** 返回老人服务首页，同时取消状态筛选并重新读取最新数据。 */
 async function showUserHome() {
   state.userView = "home";
   state.appointmentsFilter = "";
@@ -459,6 +846,7 @@ async function showUserHome() {
   renderUserDashboard();
 }
 
+/** 打开“我的预约”，默认显示全部状态的预约记录。 */
 async function showUserAppointments() {
   state.userView = "appointments";
   state.appointmentsFilter = "";
@@ -466,33 +854,60 @@ async function showUserAppointments() {
   renderUserDashboard();
 }
 
+/**
+ * 按状态重新查询老人预约。
+ * @param {string} status 空字符串、PENDING、COMPLETED 或 CANCELLED。
+ */
 async function filterUserAppointments(status) {
   state.appointmentsFilter = status;
   await loadUserDashboard();
   renderUserDashboard();
 }
 
+/** 保存选中的服务项目并进入日期选择步骤。 */
 function selectBookingService(serviceId) {
   state.selectedServiceId = serviceId;
+  state.selectedDate = "";
   state.bookingStep = 2;
   renderUserDashboard();
 }
 
-async function selectBookingDate(date) {
+/** 只保存当前选中的服务日期并留在第二步，等待用户点击“下一步”确认。 */
+function selectBookingDate(date) {
   if (!date) throw new Error("请选择服务日期");
   state.selectedDate = date;
+  state.selectedEmployeeId = "";
+  renderUserDashboard();
+}
+
+/**
+ * 确认第二步选中的日期，查询当日可用护工后再进入第三步。
+ * 选择与确认分开，避免老人误触日期卡片后立即离开当前页面。
+ */
+async function confirmBookingDate() {
+  if (!state.selectedDate) throw new Error("请先选择服务日期");
+  if (state.selectedDate < today()) throw new Error("不能选择过去的日期");
   state.bookingStep = 3;
   state.selectedEmployeeId = "";
   await loadAvailableEmployees(false);
   renderUserDashboard();
 }
 
+/** 保存并展开当前选中的护工资料，继续停留在第三步供用户查看。 */
 function chooseBookingEmployee(employeeId) {
-  state.selectedEmployeeId = employeeId;
+  // 再次点击当前护工（包括右侧向上箭头）时收起资料并取消当前选择。
+  state.selectedEmployeeId = String(state.selectedEmployeeId) === String(employeeId) ? "" : employeeId;
+  renderUserDashboard();
+}
+
+/** 确认第三步选择的护工后，再进入最终预约确认步骤。 */
+function confirmBookingEmployee() {
+  if (!state.selectedEmployeeId) throw new Error("请先选择服务人员");
   state.bookingStep = 4;
   renderUserDashboard();
 }
 
+/** 返回预约上一步；已在第一步时直接退出预约流程并回到服务首页。 */
 function bookingBack() {
   if (state.bookingStep <= 1) {
     state.userView = "home";
@@ -502,6 +917,10 @@ function bookingBack() {
   renderUserDashboard();
 }
 
+/**
+ * 组合四步预约页面的公共标题、进度条和当前步骤内容。
+ * @returns {string} 可写入 content 容器的 HTML 字符串。
+ */
 function renderBookingWizard(services, employees) {
   const step = state.bookingStep;
   const headings = ["您需要什么服务？", "您希望哪天服务？", "选择服务人员", "确认预约信息"];
@@ -525,6 +944,7 @@ function renderBookingWizard(services, employees) {
   `;
 }
 
+/** 根据当前步骤生成四段进度指示，已完成和当前步骤使用 active 类名。 */
 function renderBookingProgress(step) {
   const labels = ["选服务", "选日期", "选人员", "确认"];
   return `<div class="booking-progress" aria-label="预约进度">${labels.map((label, index) => `
@@ -532,6 +952,7 @@ function renderBookingProgress(step) {
   `).join("")}</div>`;
 }
 
+/** 把后端返回的服务项目转成适合老人直接点击的大按钮。 */
 function renderServiceChoices(services) {
   if (!services.length) return `<div class="senior-empty">暂时没有可预约的服务，请稍后再试。</div>`;
   return `<div class="service-choice-grid">${services.map((service) => `
@@ -543,20 +964,28 @@ function renderServiceChoices(services) {
   `).join("")}</div>`;
 }
 
+/** 提供今天、明天、后天三个快捷日期以及原生日期选择器。 */
 function renderDateChoices() {
   const dates = [0, 1, 2].map((offset) => offsetDate(offset));
   const names = ["今天", "明天", "后天"];
   return `
     <div class="date-choice-grid">
-      ${dates.map((date, index) => `<button class="date-choice" type="button" data-action="select-date" data-date="${date}"><strong>${names[index]}</strong><span>${formatFriendlyDate(date)}</span></button>`).join("")}
+      ${dates.map((date, index) => `
+        <button class="date-choice ${state.selectedDate === date ? "selected" : ""}" type="button" data-action="select-date" data-date="${date}" aria-pressed="${state.selectedDate === date}">
+          <strong>${names[index]}</strong><span>${formatFriendlyDate(date)}</span>
+        </button>`).join("")}
     </div>
     <div class="custom-date-choice">
-      <label class="field"><span>选择其他日期</span><input id="bookingDate" type="date" min="${today()}" value="${escapeHtml(state.selectedDate || today())}"></label>
-      <button class="btn senior-primary" type="button" data-action="use-custom-date">下一步：选择服务人员</button>
+      <label class="field"><span>选择其他日期</span><input id="bookingDate" type="date" min="${today()}" value="${escapeHtml(state.selectedDate)}" required aria-label="选择其他服务日期"></label>
+      <button class="btn senior-primary date-next-button" type="button" data-action="use-custom-date" ${state.selectedDate ? "" : "disabled"}>下一步：选择服务人员</button>
     </div>
   `;
 }
 
+/**
+ * 渲染指定日期的可预约护工列表。
+ * 老人端只展示预约所需信息，不显示护工薪资等内部字段。
+ */
 function renderStaffChoices(employees) {
   if (!employees.length) return `
     <div class="senior-empty">
@@ -564,15 +993,48 @@ function renderStaffChoices(employees) {
       <p>请返回上一步选择其他日期。</p>
     </div>
   `;
-  return `<div class="staff-choice-list">${employees.map((employee) => `
-    <button class="staff-choice" type="button" data-action="choose-employee" data-employee-id="${employee.id}">
-      <span class="staff-avatar" aria-hidden="true">${escapeHtml(firstCharacter(employee.name))}</span>
-      <span><strong>${escapeHtml(employee.name)}</strong><small>平台服务人员 · 当日可预约</small></span>
-      <span class="staff-select">选择</span>
-    </button>
-  `).join("")}</div>`;
+  const selectedEmployee = employees.find((employee) => String(employee.id) === String(state.selectedEmployeeId));
+  return `
+    <div class="staff-choice-list">${employees.map((employee) => {
+      const selected = String(employee.id) === String(state.selectedEmployeeId);
+      return `
+        <article class="staff-choice-card ${selected ? "selected" : ""}">
+          <button class="staff-choice" type="button" data-action="choose-employee" data-employee-id="${employee.id}" aria-expanded="${selected}" aria-pressed="${selected}">
+            <span class="staff-avatar" aria-hidden="true">${escapeHtml(firstCharacter(employee.name))}</span>
+            <span class="staff-choice-copy"><strong>${escapeHtml(employee.name)}</strong><small>平台服务人员 · 当日可预约</small></span>
+            <span class="staff-expand" aria-hidden="true">⌄</span>
+          </button>
+          ${selected ? renderStaffBasicInfo(employee) : ""}
+        </article>`;
+    }).join("")}</div>
+    <div class="staff-confirm-bar">
+      <p>${selectedEmployee ? `已选择：<strong>${escapeHtml(selectedEmployee.name)}</strong>` : "请点击一位服务人员查看基本信息"}</p>
+      <button class="btn senior-primary staff-next-button" type="button" data-action="confirm-employee" ${selectedEmployee ? "" : "disabled"}>下一步：确认预约</button>
+    </div>`;
 }
 
+/**
+ * 生成老人预约前可以查看的护工基本资料。
+ * 联系电话和薪资不在选择阶段公开，电话会在预约成功后的预约卡片中显示。
+ */
+function renderStaffBasicInfo(employee) {
+  const age = Number(employee.age) > 0 ? `${escapeHtml(employee.age)}岁` : "暂未提供";
+  return `
+    <div class="staff-basic-info">
+      <dl>
+        <div><dt>姓名</dt><dd>${escapeHtml(employee.name)}</dd></div>
+        <div><dt>年龄</dt><dd>${age}</dd></div>
+        <div><dt>接单状态</dt><dd>正在接单</dd></div>
+        <div><dt>可预约日期</dt><dd>${formatFriendlyDate(state.selectedDate)}</dd></div>
+      </dl>
+      <p>联系电话将在预约成功后显示</p>
+    </div>`;
+}
+
+/**
+ * 使用状态中保存的 ID 查找服务和护工，生成提交前的预约摘要。
+ * 若其中任何一项不存在，则阻止提交并提示用户返回重新选择。
+ */
 function renderBookingConfirmation(services, employees) {
   const service = services.find((item) => String(item.id) === String(state.selectedServiceId));
   const employee = employees.find((item) => String(item.id) === String(state.selectedEmployeeId));
@@ -589,6 +1051,7 @@ function renderBookingConfirmation(services, employees) {
   `;
 }
 
+/** 生成预约状态筛选栏和纵向预约卡片列表。 */
 function renderUserAppointments(appointments) {
   const filters = [["", "全部"], ["PENDING", "待服务"], ["COMPLETED", "已完成"], ["CANCELLED", "已取消"]];
   return `
@@ -605,6 +1068,10 @@ function renderUserAppointments(appointments) {
   `;
 }
 
+/**
+ * 生成一条老人预约卡片。
+ * 只有待服务预约允许取消；护工电话存在时才显示，避免出现空联系方式。
+ */
 function renderUserAppointmentCard(item) {
   return `
     <article class="senior-appointment-card">
@@ -622,12 +1089,18 @@ function renderUserAppointmentCard(item) {
   `;
 }
 
+/** 把后端英文状态转换为带文字和符号的适老化状态标签。 */
 function seniorStatusBadge(status) {
   if (status === "COMPLETED") return `<span class="senior-status completed">✓ 服务已完成</span>`;
   if (status === "CANCELLED") return `<span class="senior-status cancelled">× 预约已取消</span>`;
   return `<span class="senior-status pending">● 已预约，等待服务</span>`;
 }
 
+/**
+ * 提交新预约。
+ * 前端先检查服务和护工是否已选，再把 ID 转成数字并发送给后端；
+ * 成功后清理预约步骤并直接展示最新预约记录。
+ */
 async function bookEmployee(employeeId) {
   if (!state.selectedServiceId) throw new Error("请先选择服务项目");
   if (!employeeId) throw new Error("请选择服务人员");
@@ -649,6 +1122,7 @@ async function bookEmployee(employeeId) {
   renderUserDashboard();
 }
 
+/** 经用户二次确认后取消预约，并重新加载列表以显示后端的最终状态。 */
 async function cancelUserAppointment(id) {
   if (!confirm("确定要取消这个预约吗？")) return;
   await api(`/appointments/${id}/cancel`, { method: "PATCH" });
@@ -657,20 +1131,50 @@ async function cancelUserAppointment(id) {
   renderUserDashboard();
 }
 
+/* ==================== 护工端 ====================
+ * 护工端围绕“接单状态、下一项待服务任务、今日任务、全部任务”组织数据。
+ */
+
+/**
+ * 加载护工资料和任务。
+ * 全部任务页可能带状态筛选；为了仍能正确计算顶部概况，此时会额外请求一份未筛选任务。
+ */
 async function loadEmployeeDashboard() {
-  const query = state.employeeView === "all" ? statusQuery() : "";
-  const [me, appointments, allAppointments] = await Promise.all([
-    api("/employees/me"),
-    api(`/employees/me/appointments${query}`),
-    query ? api("/employees/me/appointments") : Promise.resolve(null)
-  ]);
+  const me = await api("/employees/me");
   state.data.employee = me;
+  state.data.employeeAppointments = [];
+  state.data.employeeAllAppointments = [];
+  state.data.employeeAvailability = [];
+
+  // 未完成学习或尚未通过答题时只需要个人培训状态，不请求工作台数据。
+  if (!me.quizPassed) return;
+
+  const query = state.employeeView === "all" ? statusQuery() : "";
+  const [appointments, allAppointments, availability] = await Promise.all([
+    api(`/employees/me/appointments${query}`),
+    query ? api("/employees/me/appointments") : Promise.resolve(null),
+    api("/employees/me/availability")
+  ]);
   state.data.employeeAppointments = appointments;
   state.data.employeeAllAppointments = allAppointments || appointments;
+  state.data.employeeAvailability = availability || [];
 }
 
+/**
+ * 计算并渲染护工工作台。
+ * “下一项任务”优先选取日期最早且不早于今天的待服务预约，若没有则回退到首条待处理记录。
+ */
 function renderEmployeeDashboard() {
   const employee = state.data.employee || {};
+  if (!employee.trainingCompleted) {
+    renderEmployeeTraining();
+    return;
+  }
+  if (!employee.quizPassed) {
+    renderEmployeeQuiz();
+    return;
+  }
+
   const appointments = state.data.employeeAppointments || [];
   const allAppointments = state.data.employeeAllAppointments || appointments;
   const todayTasks = allAppointments.filter((item) => item.appointmentDate === today());
@@ -701,6 +1205,8 @@ function renderEmployeeDashboard() {
         </label>
       </section>
 
+      ${renderEmployeeAvailability()}
+
       <nav class="employee-view-tabs" aria-label="任务视图">
         <button type="button" class="${state.employeeView === "today" ? "active" : ""}" data-action="employee-view" data-view="today">任务首页</button>
         <button type="button" class="${state.employeeView === "all" ? "active" : ""}" data-action="employee-view" data-view="all">全部任务</button>
@@ -713,6 +1219,177 @@ function renderEmployeeDashboard() {
   `;
 }
 
+/**
+ * 新注册护工首先看到岗前学习页。内容聚焦课设需要的基础照护常识，
+ * 阅读确认后会把 trainingCompleted 状态持久化，再进入答题环节。
+ */
+function renderEmployeeTraining() {
+  const employee = state.data.employee || {};
+  el.viewEyebrow.textContent = "护工岗前培训";
+  el.viewTitle.textContent = `欢迎，${employee.name || state.name || "新护工"}`;
+  el.viewActions.innerHTML = "";
+  el.content.innerHTML = `
+    <main class="training-shell">
+      ${renderTrainingProgress(1)}
+      <header class="training-intro">
+        <p>开始服务前，请先完成基础学习</p>
+        <h3>护工服务须知</h3>
+        <span>请阅读以下四部分内容。完成学习后还需要通过 4 道安全常识题。</span>
+      </header>
+      <div class="training-module-list">
+        <article class="training-module">
+          <span class="training-module-number">01</span>
+          <div><h4>服务前做好确认</h4><p>到达后先核对老人姓名、服务项目和地址，主动说明身份。开始服务前询问身体状况、行动是否方便及家属交代的注意事项。</p></div>
+        </article>
+        <article class="training-module">
+          <span class="training-module-number">02</span>
+          <div><h4>尊重老人并耐心沟通</h4><p>说话放慢速度，使用礼貌称呼，给老人足够的回答时间。不得泄露健康、住址和家庭情况，也不要擅自拍照或发布服务过程。</p></div>
+        </article>
+        <article class="training-module">
+          <span class="training-module-number">03</span>
+          <div><h4>留意常见身体问题</h4><p>老人可能出现头晕、跌倒、噎食或突发不适。先保证现场安全并观察意识和呼吸，不要强行搬动，也不要擅自喂药。</p></div>
+        </article>
+        <article class="training-module">
+          <span class="training-module-number">04</span>
+          <div><h4>异常情况及时求助</h4><p>遇到无法独立处理的情况，应立即联系家属或平台；出现意识不清、呼吸困难等紧急情况时，应及时拨打 120 并说明准确地址。</p></div>
+        </article>
+      </div>
+      <div class="training-complete-bar">
+        <label><input id="trainingAcknowledge" type="checkbox"><span>我已阅读并理解以上服务须知</span></label>
+        <button id="completeTrainingButton" class="btn training-primary" type="button" data-action="complete-training" disabled>完成学习，开始答题</button>
+      </div>
+    </main>
+  `;
+}
+
+/** 生成学习、答题和设置时间三个阶段的进度提示。 */
+function renderTrainingProgress(activeStep) {
+  const steps = ["岗前学习", "安全答题", "设置时间"];
+  return `
+    <ol class="training-progress" aria-label="护工入职进度">
+      ${steps.map((label, index) => {
+        const step = index + 1;
+        const status = step < activeStep ? "done" : step === activeStep ? "active" : "";
+        return `<li class="${status}"><span>${step < activeStep ? "✓" : step}</span><strong>${label}</strong></li>`;
+      }).join("")}
+    </ol>
+  `;
+}
+
+/** 管理员开放权限或护工完成学习后显示四道岗前安全题。 */
+function renderEmployeeQuiz() {
+  const result = state.employeeQuizResult;
+  el.viewEyebrow.textContent = "护工岗前培训";
+  el.viewTitle.textContent = "安全常识答题";
+  el.viewActions.innerHTML = "";
+  el.content.innerHTML = `
+    <main class="training-shell quiz-shell">
+      ${renderTrainingProgress(2)}
+      <header class="training-intro">
+        <p>共 4 题，答对至少 3 题即可通过</p>
+        <h3>请根据实际服务情况作答</h3>
+        <span>未通过可以重新作答。请完成全部题目后再提交。</span>
+      </header>
+      ${result && !result.passed ? `<div class="quiz-result error"><strong>本次答对 ${result.score} 题</strong><span>还需要答对至少 ${Math.max(0, 3 - result.score)} 题，请检查后重新提交。</span></div>` : ""}
+      <form class="training-quiz" data-submit="employee-quiz">
+        ${trainingQuestion("q1", "老人不慎跌倒并表示疼痛时，首先应该怎么做？", [
+          ["A", "立即把老人拉起来"], ["B", "保证现场安全，观察情况并及时求助"], ["C", "先离开现场寻找其他人"]
+        ])}
+        ${trainingQuestion("q2", "老人进食时突然无法说话并出现呼吸困难，应该怎么处理？", [
+          ["A", "马上给老人喝水"], ["B", "先等待几分钟看看"], ["C", "停止进食，判断噎食情况并立即采取急救或呼救"]
+        ])}
+        ${trainingQuestion("q3", "老人要求临时改变药量时，正确做法是什么？", [
+          ["A", "核对医嘱并联系家属或专业人员确认"], ["B", "根据自己的经验增加药量"], ["C", "使用其他老人的同类药物"]
+        ])}
+        ${trainingQuestion("q4", "老人情绪焦虑、反复询问同一问题时，应该怎么沟通？", [
+          ["A", "严厉制止老人继续询问"], ["B", "保持耐心，放慢语速并重复说明"], ["C", "不回应，继续完成手上的工作"]
+        ])}
+        <div class="quiz-submit-bar"><span>提交后系统会立即显示结果</span><button class="btn training-primary" type="submit">提交答案</button></div>
+      </form>
+    </main>
+  `;
+}
+
+/** 生成一道单选题，选项使用同一 name，保证每题只能选择一个答案。 */
+function trainingQuestion(name, title, options) {
+  return `
+    <fieldset class="training-question">
+      <legend><span>${name.replace("q", "")}</span>${escapeHtml(title)}</legend>
+      <div class="training-options">
+        ${options.map(([value, label]) => `<label><input type="radio" name="${name}" value="${value}" required><span><b>${value}</b>${escapeHtml(label)}</span></label>`).join("")}
+      </div>
+    </fieldset>
+  `;
+}
+
+/** 将护工确认完成学习的状态写入后端，然后加载答题页。 */
+async function completeEmployeeTraining() {
+  await api("/employees/me/training/complete", { method: "PATCH" });
+  state.employeeQuizResult = null;
+  notify("学习已完成，请参加安全答题", "success");
+  await loadEmployeeDashboard();
+  renderEmployeeDashboard();
+}
+
+/** 提交答题并根据后端评分进入工作台或留在当前页重新作答。 */
+async function submitEmployeeQuiz(answers) {
+  const result = await api("/employees/me/training/quiz", {
+    method: "POST",
+    body: { answers }
+  });
+  state.employeeQuizResult = result;
+  if (result.passed) {
+    notify(`答对 ${result.score} 题，培训已通过`, "success");
+  } else {
+    notify(`本次答对 ${result.score} 题，请重新作答`, "error");
+  }
+  await loadEmployeeDashboard();
+  renderEmployeeDashboard();
+}
+
+/**
+ * 工作台中的星期一至星期五可工作时段表。
+ * 已保存的时段来自后端，勾选状态不会只停留在当前浏览器中。
+ */
+function renderEmployeeAvailability() {
+  const selected = new Set(state.data.employeeAvailability || []);
+  const days = [[1, "星期一"], [2, "星期二"], [3, "星期三"], [4, "星期四"], [5, "星期五"]];
+  const periods = [["MORNING", "上午", "08:00-12:00"], ["AFTERNOON", "下午", "12:00-18:00"], ["EVENING", "晚上", "18:00-21:00"]];
+  return `
+    <section class="employee-availability">
+      <div class="employee-section-heading">
+        <div><p>每周工作安排</p><h3>选择可以工作的时间</h3></div>
+        <span class="availability-note">可多选，修改后请保存</span>
+      </div>
+      ${renderTrainingProgress(3)}
+      <form data-submit="employee-schedule">
+        <div class="availability-grid" role="group" aria-label="每周可工作时段">
+          <div class="availability-corner">工作日</div>
+          ${periods.map(([, label, time]) => `<div class="availability-heading"><strong>${label}</strong><small>${time}</small></div>`).join("")}
+          ${days.map(([day, label]) => `
+            <div class="availability-day">${label}</div>
+            ${periods.map(([period, periodLabel]) => {
+              const value = `${day}_${period}`;
+              return `<label class="availability-slot"><input type="checkbox" name="slot" value="${value}" ${selected.has(value) ? "checked" : ""}><span><b>✓</b>${periodLabel}</span></label>`;
+            }).join("")}
+          `).join("")}
+        </div>
+        <div class="availability-save"><span>已选择 <strong data-availability-count>${selected.size}</strong> 个时段</span><button class="btn" type="submit">保存工作时间</button></div>
+      </form>
+    </section>
+  `;
+}
+
+/** 收集时间表中的所有复选框并整体保存，空列表表示暂时不安排工作。 */
+async function saveEmployeeAvailability(form) {
+  const slots = Array.from(form.querySelectorAll('input[name="slot"]:checked')).map((input) => input.value);
+  await api("/employees/me/availability", { method: "PUT", body: { slots } });
+  state.data.employeeAvailability = slots;
+  notify("可工作时间已保存", "success");
+  renderEmployeeDashboard();
+}
+
+/** 在任务首页和全部任务之间切换，并重置旧的状态筛选。 */
 async function showEmployeeView(view) {
   state.employeeView = view === "all" ? "all" : "today";
   state.appointmentsFilter = "";
@@ -720,6 +1397,7 @@ async function showEmployeeView(view) {
   renderEmployeeDashboard();
 }
 
+/** 切换到全部任务页，并按后端预约状态重新查询任务。 */
 async function filterEmployeeTasks(status) {
   state.employeeView = "all";
   state.appointmentsFilter = status;
@@ -727,6 +1405,7 @@ async function filterEmployeeTasks(status) {
   renderEmployeeDashboard();
 }
 
+/** 组合“下一项待服务任务”和“今日任务”两个工作区域。 */
 function renderEmployeeTodayView(nextTask, todayTasks) {
   return `
     <section class="next-task-section">
@@ -742,6 +1421,7 @@ function renderEmployeeTodayView(nextTask, todayTasks) {
   `;
 }
 
+/** 生成最醒目的下一项任务卡，包含日期、服务对象、地址、状态和处理按钮。 */
 function renderEmployeeNextTask(task) {
   return `
     <article class="next-task-card">
@@ -756,6 +1436,7 @@ function renderEmployeeNextTask(task) {
   `;
 }
 
+/** 生成全部任务页面，包括状态筛选按钮和任务卡片列表。 */
 function renderAllEmployeeTasks(appointments) {
   const filters = [["", "全部"], ["PENDING", "待服务"], ["COMPLETED", "已完成"], ["CANCELLED", "已取消"]];
   return `
@@ -769,6 +1450,11 @@ function renderAllEmployeeTasks(appointments) {
   `;
 }
 
+/**
+ * 生成普通护工任务卡片。
+ * @param {Object} task 后端返回的预约任务。
+ * @param {boolean} compact 是否使用今日任务中的紧凑布局。
+ */
 function renderEmployeeTaskCard(task, compact = false) {
   return `
     <article class="employee-task-card ${compact ? "compact" : ""}">
@@ -780,6 +1466,10 @@ function renderEmployeeTaskCard(task, compact = false) {
   `;
 }
 
+/**
+ * 为待服务任务生成可执行操作。
+ * 电话联系使用浏览器 tel: 协议，查看路线调用高德地图；已完成和已取消任务不再显示操作。
+ */
 function renderEmployeeTaskActions(task, prominent = false) {
   if (task.status !== "PENDING") return "";
   return `
@@ -792,12 +1482,17 @@ function renderEmployeeTaskActions(task, prominent = false) {
   `;
 }
 
+/** 把后端预约状态转换成护工端的可读状态标签。 */
 function employeeTaskStatus(status) {
   if (status === "COMPLETED") return `<span class="employee-task-status completed">✓ 已完成</span>`;
   if (status === "CANCELLED") return `<span class="employee-task-status cancelled">× 已取消</span>`;
   return `<span class="employee-task-status pending">● 待服务</span>`;
 }
 
+/**
+ * 更新护工是否接收新预约的状态。
+ * 这是“接单中/暂停接单”，与单个任务是否完成是两个独立概念。
+ */
 async function updateEmployeeStatus(working) {
   await api("/employees/me/status", { method: "PATCH", body: { isWorking: working } });
   notify(working ? "已进入接单状态" : "已暂停接收新预约", "success");
@@ -805,6 +1500,7 @@ async function updateEmployeeStatus(working) {
   renderEmployeeDashboard();
 }
 
+/** 经二次确认后将指定任务标记为完成，并重新加载任务概况。 */
 async function employeeComplete(id) {
   if (!confirm("确定这项服务已经完成吗？")) return;
   await api(`/employees/me/appointments/${id}/complete`, { method: "PATCH" });
@@ -813,6 +1509,7 @@ async function employeeComplete(id) {
   renderEmployeeDashboard();
 }
 
+/** 经二次确认后取消指定任务，并重新加载任务概况。 */
 async function employeeCancel(id) {
   if (!confirm("确定要取消这项任务吗？")) return;
   await api(`/employees/me/appointments/${id}/cancel`, { method: "PATCH" });
@@ -821,6 +1518,11 @@ async function employeeCancel(id) {
   renderEmployeeDashboard();
 }
 
+/* ==================== 管理员端 ====================
+ * 管理员可以维护服务项目、老人用户、护工员工，并查看全平台预约。
+ */
+
+/** 并行加载管理员四类数据，减少进入后台时等待多个串行请求的时间。 */
 async function loadAdminData() {
   const query = statusQuery();
   const [services, users, employees, appointments] = await Promise.all([
@@ -835,6 +1537,7 @@ async function loadAdminData() {
   state.data.adminAppointments = appointments;
 }
 
+/** 渲染管理员数据概况、功能标签页和当前标签对应的管理面板。 */
 function renderAdminDashboard() {
   const services = state.data.adminServices || [];
   const users = state.data.adminUsers || [];
@@ -861,10 +1564,12 @@ function renderAdminDashboard() {
   `;
 }
 
+/** 生成管理员标签按钮，并根据 activeAdminTab 标记当前选中项。 */
 function adminTab(tab, label) {
   return `<button class="tab ${state.activeAdminTab === tab ? "active" : ""}" type="button" data-action="admin-tab" data-tab="${tab}">${label}</button>`;
 }
 
+/** 根据管理员当前标签分发到对应面板渲染函数。 */
 function adminPanel() {
   if (state.activeAdminTab === "services") return adminServicesPanel();
   if (state.activeAdminTab === "users") return adminUsersPanel();
@@ -872,6 +1577,7 @@ function adminPanel() {
   return adminAppointmentsPanel();
 }
 
+/** 生成新增服务表单和可直接编辑、保存、删除的服务项目表格。 */
 function adminServicesPanel() {
   const services = state.data.adminServices || [];
   return `
@@ -915,6 +1621,7 @@ function adminServicesPanel() {
   `;
 }
 
+/** 生成老人用户列表，并提供启用、禁用和删除操作。 */
 function adminUsersPanel() {
   const users = state.data.adminUsers || [];
   return `
@@ -942,6 +1649,7 @@ function adminUsersPanel() {
   `;
 }
 
+/** 生成护工列表，展示接单与账号状态，并提供启用、禁用和删除操作。 */
 function adminEmployeesPanel() {
   const employees = state.data.adminEmployees || [];
   return `
@@ -949,16 +1657,17 @@ function adminEmployeesPanel() {
       <h3>员工列表</h3>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>姓名</th><th>用户名</th><th>电话</th><th>薪资</th><th>接单</th><th>状态</th><th>操作</th></tr></thead>
+          <thead><tr><th>姓名</th><th>用户名</th><th>电话</th><th>培训状态</th><th>接单</th><th>状态</th><th>操作</th></tr></thead>
           <tbody>${employees.map((employee) => `
             <tr>
               <td>${escapeHtml(employee.name)}</td>
               <td>${escapeHtml(employee.username)}</td>
               <td>${escapeHtml(employee.phone)}</td>
-              <td>¥${escapeHtml(employee.salary)}</td>
+              <td>${employeeTrainingBadge(employee)}</td>
               <td>${employee.working ? `<span class="badge success">工作中</span>` : `<span class="badge warning">暂停</span>`}</td>
               <td>${activeBadge(employee.active)}</td>
               <td class="row">
+                ${!employee.trainingCompleted ? `<button class="btn secondary" type="button" data-action="grant-employee-training" data-id="${employee.id}">开放答题</button>` : ""}
                 <button class="btn secondary" type="button" data-action="toggle-employee" data-id="${employee.id}" data-active="${!employee.active}">${employee.active ? "禁用" : "启用"}</button>
                 <button class="btn danger" type="button" data-action="delete-employee" data-id="${employee.id}">删除</button>
               </td>
@@ -970,6 +1679,14 @@ function adminEmployeesPanel() {
   `;
 }
 
+/** 管理员列表中的培训状态同时使用文字和颜色，避免只依赖颜色判断。 */
+function employeeTrainingBadge(employee) {
+  if (employee.quizPassed) return `<span class="badge success">✓ 已通过（${employee.quizScore}/4）</span>`;
+  if (employee.trainingCompleted) return `<span class="badge warning">待答题</span>`;
+  return `<span class="badge danger">未培训</span>`;
+}
+
+/** 生成全平台预约总览，并允许管理员按预约状态筛选。 */
 function adminAppointmentsPanel() {
   const appointments = state.data.adminAppointments || [];
   return `
@@ -985,6 +1702,10 @@ function adminAppointmentsPanel() {
   `;
 }
 
+/**
+ * 新增服务项目。
+ * 表单中的价格和布尔值先转换为后端要求的类型，成功后刷新管理员全部数据。
+ */
 async function createService(body) {
   body.referencePrice = Number(body.referencePrice || 0);
   body.active = body.active === "true";
@@ -994,6 +1715,10 @@ async function createService(body) {
   renderAdminDashboard();
 }
 
+/**
+ * 保存表格中被编辑的服务项目。
+ * 根据 data-service-row 定位行，再收集所有 data-field 控件形成 PUT 请求体。
+ */
 async function saveService(id) {
   const row = Array.from(document.querySelectorAll("[data-service-row]"))
     .find((item) => item.dataset.serviceRow === String(id));
@@ -1010,6 +1735,7 @@ async function saveService(id) {
   renderAdminDashboard();
 }
 
+/** 二次确认后删除服务项目，并刷新后台列表。 */
 async function deleteService(id) {
   if (!confirm("确认删除这个服务项目吗？")) return;
   await api(`/admin/services/${id}`, { method: "DELETE" });
@@ -1018,6 +1744,7 @@ async function deleteService(id) {
   renderAdminDashboard();
 }
 
+/** 修改老人账号的启用状态；active 是操作后的目标状态。 */
 async function toggleUser(id, active) {
   await api(`/admin/users/${id}/active`, { method: "PATCH", body: { active } });
   notify("用户状态已更新", "success");
@@ -1025,6 +1752,7 @@ async function toggleUser(id, active) {
   renderAdminDashboard();
 }
 
+/** 二次确认后删除老人账号。 */
 async function deleteUser(id) {
   if (!confirm("确认删除这个用户吗？")) return;
   await api(`/admin/users/${id}`, { method: "DELETE" });
@@ -1033,6 +1761,7 @@ async function deleteUser(id) {
   renderAdminDashboard();
 }
 
+/** 修改护工账号的启用状态；该状态不同于护工自行设置的接单状态。 */
 async function toggleEmployee(id, active) {
   await api(`/admin/employees/${id}/active`, { method: "PATCH", body: { active } });
   notify("员工状态已更新", "success");
@@ -1040,6 +1769,16 @@ async function toggleEmployee(id, active) {
   renderAdminDashboard();
 }
 
+/** 管理员可以为指定护工跳过阅读确认，直接开放安全答题。 */
+async function grantEmployeeTraining(id) {
+  if (!confirm("确认要为这名护工开放答题权限吗？")) return;
+  await api(`/admin/employees/${id}/training`, { method: "PATCH" });
+  notify("已为护工开放答题权限", "success");
+  await loadAdminData();
+  renderAdminDashboard();
+}
+
+/** 二次确认后删除护工账号。 */
 async function deleteEmployee(id) {
   if (!confirm("确认删除这个员工吗？")) return;
   await api(`/admin/employees/${id}`, { method: "DELETE" });
@@ -1048,6 +1787,12 @@ async function deleteEmployee(id) {
   renderAdminDashboard();
 }
 
+/* ==================== 管理表格与状态组件 ==================== */
+
+/**
+ * 把预约数组渲染成后台表格。
+ * mode 用于决定操作列允许出现哪些按钮，目前管理员页面主要使用只读模式。
+ */
 function appointmentsTable(appointments, mode) {
   if (!appointments.length) return `<div class="empty">暂无预约记录。</div>`;
   return `
@@ -1075,6 +1820,7 @@ function appointmentsTable(appointments, mode) {
   `;
 }
 
+/** 根据预约状态和查看角色生成允许执行的操作，非待服务记录只能查看。 */
 function appointmentActions(item, mode) {
   if (item.status !== "PENDING") return `<span class="muted small">无可用操作</span>`;
   if (mode === "user") {
@@ -1095,10 +1841,12 @@ function appointmentActions(item, mode) {
   return `<span class="muted small">仅查看</span>`;
 }
 
+/** 生成使用通用状态选项的预约筛选下拉框。 */
 function filterSelect() {
   return `<select id="appointmentFilter">${statusOptions()}</select>`;
 }
 
+/** 生成预约状态 option，并保持 state 中的当前筛选项为选中状态。 */
 function statusOptions() {
   const opts = [
     ["", "全部状态"],
@@ -1109,20 +1857,36 @@ function statusOptions() {
   return opts.map(([value, label]) => `<option value="${value}" ${state.appointmentsFilter === value ? "selected" : ""}>${label}</option>`).join("");
 }
 
+/** 把当前状态筛选转换为 URL 查询参数；未筛选时返回空字符串。 */
 function statusQuery() {
   return state.appointmentsFilter ? `?status=${encodeURIComponent(state.appointmentsFilter)}` : "";
 }
 
+/** 把预约英文状态转换成后台表格使用的中文徽标。 */
 function statusBadge(status) {
   if (status === "COMPLETED") return `<span class="badge success">已完成</span>`;
   if (status === "CANCELLED") return `<span class="badge danger">已取消</span>`;
   return `<span class="badge warning">待服务</span>`;
 }
 
+/** 把账号或服务的布尔启用状态转换成中文徽标。 */
 function activeBadge(active) {
   return active ? `<span class="badge success">启用</span>` : `<span class="badge danger">禁用</span>`;
 }
 
+/* ==================== 网络请求与通用工具 ==================== */
+
+/**
+ * 所有后端请求的统一入口。
+ * 1. 自动拼接 API 根地址并将请求体编码为 JSON；
+ * 2. 除公开接口外，自动在 Authorization 请求头中携带 JWT；
+ * 3. 统一解析后端 { code, message, data } 结构，只把 data 返回给业务函数；
+ * 4. 收到 401 时清除过期会话，其他失败则抛出可供 toast 显示的错误。
+ *
+ * @param {string} path 以 / 开头的接口相对路径。
+ * @param {Object} options 可包含 method、body，以及控制是否认证的 auth。
+ * @returns {*} 后端响应对象中的 data 字段。
+ */
 async function api(path, options = {}) {
   const auth = options.auth !== false;
   const headers = { "Content-Type": "application/json" };
@@ -1153,16 +1917,25 @@ async function api(path, options = {}) {
   return payload.data;
 }
 
+/** 把原生 FormData 转换为普通对象，便于作为 JSON 请求体提交。 */
 function formData(form) {
   return Object.fromEntries(new FormData(form).entries());
 }
 
+/**
+ * 在表单提交期间统一禁用或恢复所有控件，防止用户连续提交相同请求。
+ * 调用方必须在禁用之前读取 FormData。
+ */
 function setBusy(form, busy) {
   form.querySelectorAll("button, input, select, textarea").forEach((node) => {
     node.disabled = busy;
   });
 }
 
+/**
+ * 在左下角显示短暂的全局提示。
+ * type 可传 success 或 error；新的提示会取消上一个隐藏计时器并重新计时。
+ */
 function notify(message, type = "") {
   el.toast.textContent = message;
   el.toast.className = `toast ${type}`;
@@ -1170,6 +1943,10 @@ function notify(message, type = "") {
   notify.timer = window.setTimeout(() => el.toast.classList.add("hidden"), 2600);
 }
 
+/**
+ * 使用高德地图 URI API 搜索服务地址。
+ * callnative=1 在支持的移动设备上会优先尝试唤起高德地图客户端，否则打开网页地图。
+ */
 function openAmapNavigation(address) {
   const destination = String(address || "").trim();
   if (!destination) throw new Error("该预约没有可用地址");
@@ -1183,6 +1960,7 @@ function openAmapNavigation(address) {
   window.open(`https://uri.amap.com/search?${params.toString()}`, "_blank", "noopener,noreferrer");
 }
 
+/** 把后端角色代码转换为界面使用的中文名称。 */
 function roleName(role) {
   if (role === "USER") return "老人用户";
   if (role === "EMPLOYEE") return "护工员工";
@@ -1190,6 +1968,9 @@ function roleName(role) {
   return "未登录";
 }
 
+/**
+ * 按浏览器本地时区返回今天的 YYYY-MM-DD，避免 UTC 转换造成日期提前或推后一天。
+ */
 function today() {
   const now = new Date();
   const year = now.getFullYear();
@@ -1198,6 +1979,7 @@ function today() {
   return `${year}-${month}-${day}`;
 }
 
+/** 返回相对今天偏移指定天数的 YYYY-MM-DD，用于“今天、明天、后天”快捷选择。 */
 function offsetDate(offset) {
   const date = new Date();
   date.setDate(date.getDate() + offset);
@@ -1207,6 +1989,7 @@ function offsetDate(offset) {
   return `${year}-${month}-${day}`;
 }
 
+/** 把 YYYY-MM-DD 转成“7月13日 星期一”一类更容易阅读的中文日期。 */
 function formatFriendlyDate(value) {
   if (!value) return "未选择日期";
   const date = new Date(`${value}T00:00:00`);
@@ -1215,10 +1998,12 @@ function formatFriendlyDate(value) {
   return `${date.getMonth() + 1}月${date.getDate()}日 ${weekdays[date.getDay()]}`;
 }
 
+/** 取姓名的第一个 Unicode 字符作为无头像时的文字头像。 */
 function firstCharacter(value) {
   return Array.from(String(value || "服务"))[0] || "服";
 }
 
+/** 根据浏览器当前小时返回上午好、中午好、下午好或晚上好。 */
 function timeGreeting() {
   const hour = new Date().getHours();
   if (hour < 11) return "上午好";
@@ -1227,6 +2012,9 @@ function timeGreeting() {
   return "晚上好";
 }
 
+/**
+ * 转义准备插入 HTML 文本位置的数据，防止姓名、地址等后端内容被解释为标签或脚本。
+ */
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -1236,6 +2024,7 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+/** 属性值同样使用 HTML 转义；保留独立函数名便于阅读模板字符串中的数据用途。 */
 function attr(value) {
   return escapeHtml(value);
 }
