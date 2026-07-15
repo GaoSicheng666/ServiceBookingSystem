@@ -3,6 +3,8 @@ package com.eldercare.controller;
 import com.eldercare.common.ApiResponse;
 import com.eldercare.entity.Appointment;
 import com.eldercare.entity.Employee;
+import com.eldercare.dto.AvailabilityRequest;
+import com.eldercare.dto.TrainingQuizRequest;
 import com.eldercare.service.BookingService;
 import com.eldercare.service.EmployeeService;
 import com.eldercare.security.CurrentUser;
@@ -28,6 +30,32 @@ public class EmployeeController {
     @GetMapping("/me")
     public ApiResponse<Employee> me() {
         return ApiResponse.ok(employeeService.getSelf(CurrentUser.username()));
+    }
+
+    /** 护工确认已阅读培训内容，随后可以进入答题。 */
+    @PatchMapping("/me/training/complete")
+    public ApiResponse<Void> completeTraining() {
+        employeeService.completeTraining(CurrentUser.username());
+        return ApiResponse.ok();
+    }
+
+    /** 提交四道培训题，答对至少三题即通过。 */
+    @PostMapping("/me/training/quiz")
+    public ApiResponse<Map<String, Object>> submitQuiz(@RequestBody TrainingQuizRequest request) {
+        return ApiResponse.ok(employeeService.submitQuiz(CurrentUser.username(), request));
+    }
+
+    /** 查询护工星期一至星期五的可工作时段。 */
+    @GetMapping("/me/availability")
+    public ApiResponse<List<String>> availability() {
+        return ApiResponse.ok(employeeService.getAvailability(CurrentUser.username()));
+    }
+
+    /** 整体保存护工星期一至星期五的可工作时段。 */
+    @PutMapping("/me/availability")
+    public ApiResponse<Void> updateAvailability(@RequestBody AvailabilityRequest request) {
+        employeeService.updateAvailability(CurrentUser.username(), request);
+        return ApiResponse.ok();
     }
 
     /** 切换工作状态(是否接单)。 */

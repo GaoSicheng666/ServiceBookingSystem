@@ -32,6 +32,9 @@ public final class RowMappers {
         e.setSalary(rs.getBigDecimal("salary"));
         e.setWorking(rs.getBoolean("is_working"));
         e.setActive(rs.getBoolean("is_active"));
+        e.setTrainingCompleted(rs.getBoolean("training_completed"));
+        e.setQuizPassed(rs.getBoolean("quiz_passed"));
+        e.setQuizScore(rs.getInt("quiz_score"));
         return e;
     };
 

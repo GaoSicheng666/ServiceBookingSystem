@@ -14,6 +14,9 @@ public class Employee {
     private BigDecimal salary;
     private boolean working = false;
     private boolean active = true;
+    private boolean trainingCompleted = false;
+    private boolean quizPassed = false;
+    private Integer quizScore = 0;
     private LocalDateTime createdAt;
 
     public Integer getId() { return id; }
@@ -34,6 +37,12 @@ public class Employee {
     public void setWorking(boolean working) { this.working = working; }
     public boolean isActive() { return active; }
     public void setActive(boolean active) { this.active = active; }
+    public boolean isTrainingCompleted() { return trainingCompleted; }
+    public void setTrainingCompleted(boolean trainingCompleted) { this.trainingCompleted = trainingCompleted; }
+    public boolean isQuizPassed() { return quizPassed; }
+    public void setQuizPassed(boolean quizPassed) { this.quizPassed = quizPassed; }
+    public Integer getQuizScore() { return quizScore; }
+    public void setQuizScore(Integer quizScore) { this.quizScore = quizScore; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }

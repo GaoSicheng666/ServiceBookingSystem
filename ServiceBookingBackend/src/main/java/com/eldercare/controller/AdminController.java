@@ -78,6 +78,13 @@ public class AdminController {
         return ApiResponse.ok();
     }
 
+    /** 管理员为护工开放答题权限。 */
+    @PatchMapping("/employees/{id}/training")
+    public ApiResponse<Void> grantEmployeeTraining(@PathVariable int id) {
+        adminService.grantEmployeeTraining(id);
+        return ApiResponse.ok();
+    }
+
     @DeleteMapping("/employees/{id}")
     public ApiResponse<Void> deleteEmployee(@PathVariable int id) {
         adminService.deleteEmployee(id);

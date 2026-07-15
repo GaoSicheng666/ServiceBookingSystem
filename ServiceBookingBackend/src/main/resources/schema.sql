@@ -35,6 +35,29 @@ CREATE TABLE IF NOT EXISTS employees (
     CONSTRAINT uk_employees_username UNIQUE (username)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 护工培训与答题状态。独立建表可以兼容系统中已经存在的护工账号。
+CREATE TABLE IF NOT EXISTS employee_training (
+    employee_id INT PRIMARY KEY,
+    training_completed BOOLEAN NOT NULL DEFAULT FALSE,
+    quiz_passed BOOLEAN NOT NULL DEFAULT FALSE,
+    quiz_score TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    training_completed_at TIMESTAMP NULL DEFAULT NULL,
+    quiz_passed_at TIMESTAMP NULL DEFAULT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_training_employee FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 护工每周可工作时段。weekday 使用 1-5 表示星期一至星期五。
+CREATE TABLE IF NOT EXISTS employee_availability (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    employee_id INT NOT NULL,
+    weekday TINYINT UNSIGNED NOT NULL,
+    time_period VARCHAR(20) NOT NULL,
+    CONSTRAINT uk_employee_availability UNIQUE (employee_id, weekday, time_period),
+    CONSTRAINT fk_availability_employee FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
+    INDEX idx_availability_employee (employee_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 管理员表
 CREATE TABLE IF NOT EXISTS admins (
     id INT PRIMARY KEY AUTO_INCREMENT,

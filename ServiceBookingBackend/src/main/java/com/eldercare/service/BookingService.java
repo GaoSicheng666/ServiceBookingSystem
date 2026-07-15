@@ -64,6 +64,9 @@ public class BookingService {
         if (!emp.isWorking()) {
             throw new BusinessException(2003, "该员工当前不接单");
         }
+        if (!emp.isQuizPassed()) {
+            throw new BusinessException(2003, "该员工尚未通过岗前培训");
+        }
 
         ServiceItem service = serviceRepo.findById(req.getServiceId())
                 .orElseThrow(() -> new BusinessException(2004, "服务项目不存在"));

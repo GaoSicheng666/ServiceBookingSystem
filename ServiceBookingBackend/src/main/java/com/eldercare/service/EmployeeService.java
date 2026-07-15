@@ -1,28 +1,114 @@
 package com.eldercare.service;
 
 import com.eldercare.common.BusinessException;
+import com.eldercare.dto.AvailabilityRequest;
+import com.eldercare.dto.TrainingQuizRequest;
 import com.eldercare.entity.Employee;
 import com.eldercare.repository.EmployeeRepository;
+import com.eldercare.repository.EmployeeTrainingRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-/** 员工自助服务:查看自己信息、切换工作状态。 */
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
+
+/** 护工自助服务：培训、答题、可工作时段、资料和接单状态。 */
 @Service
 public class EmployeeService {
 
-    private final EmployeeRepository employeeRepo;
+    private static final Map<String, String> QUIZ_ANSWERS = Map.of(
+            "q1", "B",
+            "q2", "C",
+            "q3", "A",
+            "q4", "B"
+    );
+    private static final Pattern SLOT_PATTERN =
+            Pattern.compile("^[1-5]_(MORNING|AFTERNOON|EVENING)$");
 
-    public EmployeeService(EmployeeRepository employeeRepo) {
+    private final EmployeeRepository employeeRepo;
+    private final EmployeeTrainingRepository trainingRepo;
+
+    public EmployeeService(EmployeeRepository employeeRepo,
+                           EmployeeTrainingRepository trainingRepo) {
         this.employeeRepo = employeeRepo;
+        this.trainingRepo = trainingRepo;
     }
 
     public Employee getSelf(String username) {
-        Employee e = employeeRepo.findByUsername(username)
-                .orElseThrow(() -> new BusinessException("员工不存在"));
-        e.setPassword(null);     // 不返回密码
-        return e;
+        Employee employee = requireEmployee(username);
+        employee.setPassword(null);
+        return employee;
+    }
+
+    public void completeTraining(String username) {
+        Employee employee = requireEmployee(username);
+        trainingRepo.completeTraining(employee.getId());
+    }
+
+    /** 四题答对至少三题视为通过，未通过时允许重新作答。 */
+    public Map<String, Object> submitQuiz(String username, TrainingQuizRequest request) {
+        Employee employee = requireEmployee(username);
+        if (!employee.isTrainingCompleted()) {
+            throw new BusinessException("请先完成培训学习");
+        }
+        Map<String, String> answers = request == null ? null : request.getAnswers();
+        if (answers == null || !answers.keySet().containsAll(QUIZ_ANSWERS.keySet())) {
+            throw new BusinessException("请完成全部题目后再提交");
+        }
+
+        int score = 0;
+        for (Map.Entry<String, String> answer : QUIZ_ANSWERS.entrySet()) {
+            if (answer.getValue().equalsIgnoreCase(answers.get(answer.getKey()))) {
+                score++;
+            }
+        }
+        boolean passed = score >= 3;
+        trainingRepo.saveQuizResult(employee.getId(), score, passed);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("score", score);
+        result.put("total", QUIZ_ANSWERS.size());
+        result.put("passed", passed);
+        return result;
+    }
+
+    public List<String> getAvailability(String username) {
+        Employee employee = requireEmployee(username);
+        if (!employee.isQuizPassed()) {
+            throw new BusinessException("通过培训答题后才能设置可工作时间");
+        }
+        return trainingRepo.findAvailability(employee.getId());
+    }
+
+    @Transactional
+    public void updateAvailability(String username, AvailabilityRequest request) {
+        Employee employee = requireEmployee(username);
+        if (!employee.isQuizPassed()) {
+            throw new BusinessException("通过培训答题后才能设置可工作时间");
+        }
+
+        List<String> requested = request == null || request.getSlots() == null
+                ? List.of() : request.getSlots();
+        Set<String> slots = Set.copyOf(requested);
+        if (slots.size() > 15 || slots.stream().anyMatch(slot -> !SLOT_PATTERN.matcher(slot).matches())) {
+            throw new BusinessException("可工作时间格式不正确");
+        }
+        trainingRepo.replaceAvailability(employee.getId(), List.copyOf(slots));
     }
 
     public void updateWorkingStatus(String username, boolean working) {
+        Employee employee = requireEmployee(username);
+        if (working && !employee.isQuizPassed()) {
+            throw new BusinessException("请先完成培训并通过答题");
+        }
         employeeRepo.updateWorkingStatus(username, working);
+    }
+
+    private Employee requireEmployee(String username) {
+        return employeeRepo.findByUsername(username)
+                .orElseThrow(() -> new BusinessException("护工不存在"));
     }
 }

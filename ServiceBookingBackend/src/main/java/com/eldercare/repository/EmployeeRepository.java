@@ -16,6 +16,13 @@ import java.util.Optional;
 @Repository
 public class EmployeeRepository {
 
+    private static final String EMPLOYEE_SELECT =
+            "SELECT e.*, " +
+            "COALESCE(t.training_completed, FALSE) AS training_completed, " +
+            "COALESCE(t.quiz_passed, FALSE) AS quiz_passed, " +
+            "COALESCE(t.quiz_score, 0) AS quiz_score " +
+            "FROM employees e LEFT JOIN employee_training t ON t.employee_id = e.id ";
+
     private final JdbcTemplate jdbc;
 
     public EmployeeRepository(JdbcTemplate jdbc) {
@@ -24,13 +31,13 @@ public class EmployeeRepository {
 
     public Optional<Employee> findByUsername(String username) {
         List<Employee> list = jdbc.query(
-                "SELECT * FROM employees WHERE username = ?", RowMappers.EMPLOYEE, username);
+                EMPLOYEE_SELECT + "WHERE e.username = ?", RowMappers.EMPLOYEE, username);
         return list.stream().findFirst();
     }
 
     public Optional<Employee> findById(int id) {
         List<Employee> list = jdbc.query(
-                "SELECT * FROM employees WHERE id = ?", RowMappers.EMPLOYEE, id);
+                EMPLOYEE_SELECT + "WHERE e.id = ?", RowMappers.EMPLOYEE, id);
         return list.stream().findFirst();
     }
 
@@ -68,7 +75,7 @@ public class EmployeeRepository {
     }
 
     public List<Employee> findAll() {
-        return jdbc.query("SELECT * FROM employees ORDER BY id", RowMappers.EMPLOYEE);
+        return jdbc.query(EMPLOYEE_SELECT + "ORDER BY e.id", RowMappers.EMPLOYEE);
     }
 
     /**
@@ -77,8 +84,9 @@ public class EmployeeRepository {
      */
     public List<Employee> findAvailable(LocalDate date) {
         String sql =
-                "SELECT e.* FROM employees e " +
+                EMPLOYEE_SELECT +
                 "WHERE e.is_working = TRUE AND e.is_active = TRUE " +
+                "AND COALESCE(t.quiz_passed, FALSE) = TRUE " +
                 "AND NOT EXISTS ( " +
                 "  SELECT 1 FROM appointments a " +
                 "  WHERE a.employee_id = e.id AND a.appointment_date = ? AND a.status <> 'CANCELLED' " +

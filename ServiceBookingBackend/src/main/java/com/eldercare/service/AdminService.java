@@ -17,13 +17,16 @@ public class AdminService {
     private final ServiceRepository serviceRepo;
     private final UserRepository userRepo;
     private final EmployeeRepository employeeRepo;
+    private final EmployeeTrainingRepository trainingRepo;
     private final AppointmentRepository appointmentRepo;
 
     public AdminService(ServiceRepository serviceRepo, UserRepository userRepo,
-                        EmployeeRepository employeeRepo, AppointmentRepository appointmentRepo) {
+                        EmployeeRepository employeeRepo, EmployeeTrainingRepository trainingRepo,
+                        AppointmentRepository appointmentRepo) {
         this.serviceRepo = serviceRepo;
         this.userRepo = userRepo;
         this.employeeRepo = employeeRepo;
+        this.trainingRepo = trainingRepo;
         this.appointmentRepo = appointmentRepo;
     }
 
@@ -73,6 +76,12 @@ public class AdminService {
 
     public void setEmployeeActive(int id, boolean active) {
         employeeRepo.setActive(id, active);
+    }
+
+    /** 管理员可跳过阅读环节，为护工直接开放培训答题。 */
+    public void grantEmployeeTraining(int id) {
+        employeeRepo.findById(id).orElseThrow(() -> new BusinessException("护工不存在"));
+        trainingRepo.completeTraining(id);
     }
 
     public void deleteEmployee(int id) {
