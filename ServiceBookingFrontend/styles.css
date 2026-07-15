@@ -762,6 +762,18 @@ tr:last-child td {
   display: none !important;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* 全局操作结果提示，固定在左下角并由 app.js 在 2.6 秒后隐藏。 */
 .toast {
   position: fixed;
@@ -782,6 +794,132 @@ tr:last-child td {
 
 .toast.success {
   background: var(--success);
+}
+
+/* 护工取消任务时必须先选择原因；dialog 在桌面和手机浏览器中保持居中。 */
+.cancel-reason-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  box-shadow: 0 24px 70px rgba(25, 35, 31, 0.28);
+  overflow: auto;
+}
+
+.cancel-reason-dialog::backdrop {
+  background: rgba(25, 35, 31, 0.58);
+}
+
+.cancel-reason-dialog form {
+  padding: 26px;
+}
+
+.cancel-reason-dialog header p {
+  margin: 0 0 6px;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.cancel-reason-dialog header h3 {
+  margin: 0 0 8px;
+  font-size: 25px;
+}
+
+.cancel-reason-dialog header > span {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.cancel-reason-options {
+  margin: 22px 0 16px;
+  padding: 0;
+  border: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.cancel-reason-options label {
+  position: relative;
+  cursor: pointer;
+}
+
+.cancel-reason-options input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.cancel-reason-options label > span {
+  min-height: 52px;
+  padding: 12px 48px 12px 15px;
+  border: 2px solid #d3dbd5;
+  border-radius: 7px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.cancel-reason-options b {
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  width: 25px;
+  height: 25px;
+  border: 1px solid #aebbb3;
+  border-radius: 50%;
+  color: transparent;
+  display: grid;
+  place-items: center;
+  transform: translateY(-50%);
+}
+
+.cancel-reason-options input:checked + span {
+  border-color: var(--primary);
+  background: #edf6f1;
+  color: #204f49;
+}
+
+.cancel-reason-options input:checked + span b {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.cancel-reason-options input:focus-visible + span {
+  outline: 3px solid rgba(47, 111, 104, 0.2);
+  outline-offset: 2px;
+}
+
+.cancel-custom-reason span {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.cancel-custom-reason[hidden] {
+  display: none;
+}
+
+.cancel-custom-reason small {
+  color: var(--muted);
+}
+
+.cancel-reason-dialog footer {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.cancel-reason-dialog footer .btn {
+  min-height: 48px;
 }
 
 .split-form {
@@ -1167,10 +1305,6 @@ tr:last-child td {
   margin-top: 22px;
   padding-top: 22px;
   border-top: 1px solid var(--line);
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.58fr);
-  align-items: end;
-  gap: 16px;
 }
 
 .custom-date-choice .field {
@@ -1204,6 +1338,145 @@ tr:last-child td {
 #bookingDate:invalid::-webkit-datetime-edit-text {
   color: transparent !important;
   background: transparent !important;
+}
+
+.booking-time-section {
+  margin-top: 22px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+}
+
+.booking-time-heading,
+.booking-time-summary {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.booking-time-heading h4 {
+  margin: 0;
+  font-size: 21px;
+}
+
+.booking-time-heading span {
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.booking-time-grid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.booking-time-choice {
+  position: relative;
+  min-height: 92px;
+  padding: 14px 38px 14px 16px;
+  border: 2px solid #d3dbd5;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.booking-time-choice strong,
+.booking-time-choice span {
+  display: block;
+}
+
+.booking-time-choice strong {
+  margin-bottom: 7px;
+  color: var(--primary);
+  font-size: 20px;
+}
+
+.booking-time-choice span {
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.booking-time-choice b {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 24px;
+  height: 24px;
+  border: 1px solid #aebbb3;
+  border-radius: 50%;
+  color: transparent;
+  display: grid;
+  place-items: center;
+}
+
+.booking-time-choice.selected {
+  border-color: var(--primary);
+  background: var(--primary);
+  box-shadow: 0 9px 20px rgba(47, 111, 104, 0.16);
+}
+
+.booking-time-choice.selected strong,
+.booking-time-choice.selected span {
+  color: #fff;
+}
+
+.booking-time-choice.selected b {
+  border-color: #fff;
+  color: var(--primary);
+  background: #fff;
+}
+
+.booking-time-choice:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.booking-time-summary {
+  margin-top: 16px;
+  padding: 15px 17px;
+  border-radius: 6px;
+  background: #f2f6f3;
+}
+
+.booking-time-summary p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.booking-time-summary strong {
+  color: var(--primary);
+}
+
+.booking-price {
+  text-align: right;
+}
+
+.booking-price strong,
+.booking-price small {
+  display: block;
+}
+
+.booking-price strong {
+  font-size: 23px;
+}
+
+.booking-price small {
+  margin-top: 3px;
+  font-size: 13px;
+}
+
+.booking-step-action {
+  margin-top: 20px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.booking-step-action .date-next-button {
+  width: min(100%, 410px);
 }
 
 .senior-primary {
@@ -1274,6 +1547,13 @@ tr:last-child td {
   place-items: center;
   font-size: 24px;
   font-weight: 700;
+  overflow: hidden;
+}
+
+.staff-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .staff-choice-copy strong,
@@ -1321,6 +1601,10 @@ tr:last-child td {
   gap: 12px;
 }
 
+.staff-basic-info dl > .staff-info-wide {
+  grid-column: 1 / -1;
+}
+
 .staff-basic-info dt {
   color: var(--muted);
 }
@@ -1334,6 +1618,15 @@ tr:last-child td {
   margin: 0;
   color: var(--muted);
   font-size: 15px;
+}
+
+.staff-basic-info > .staff-bio {
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: #eef4f0;
+  color: var(--text);
+  line-height: 1.6;
 }
 
 .staff-confirm-bar {
@@ -1391,6 +1684,15 @@ tr:last-child td {
   margin: 0;
   font-size: 20px;
   font-weight: 700;
+}
+
+.booking-summary dl > .booking-summary-total {
+  border-bottom: 0;
+}
+
+.booking-summary-total dd {
+  color: var(--accent);
+  font-size: 25px;
 }
 
 .confirm-booking {
@@ -1490,9 +1792,16 @@ tr:last-child td {
 }
 
 .appointment-date {
-  margin: 14px 0 18px;
+  margin: 14px 0 5px;
   color: var(--primary);
   font-size: 21px;
+  font-weight: 700;
+}
+
+.appointment-time {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 17px;
   font-weight: 700;
 }
 
@@ -1537,6 +1846,39 @@ tr:last-child td {
   font-size: 17px;
 }
 
+.cancellation-note {
+  margin-top: 16px;
+  padding: 13px 15px;
+  border-left: 4px solid var(--danger);
+  border-radius: 4px;
+  background: #fff1f1;
+  line-height: 1.5;
+}
+
+.cancellation-note span,
+.cancellation-note strong {
+  display: block;
+}
+
+.cancellation-note span {
+  margin-bottom: 3px;
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.cancellation-note strong {
+  color: var(--text);
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.cancellation-note.compact {
+  min-width: 150px;
+  margin-top: 8px;
+  padding: 8px 10px;
+}
+
 /* ==================== 护工工作台 ====================
    围绕任务概况、接单状态、下一项任务和全部任务组织页面。 */
 .employee-workbench {
@@ -1558,7 +1900,7 @@ tr:last-child td {
 
 .employee-metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .employee-metrics > div {
@@ -1590,6 +1932,17 @@ tr:last-child td {
   margin-left: 4px;
   color: var(--muted);
   font-size: 15px;
+}
+
+.employee-metrics .income-metric strong {
+  font-size: 24px;
+  white-space: nowrap;
+}
+
+.employee-metrics .income-metric small {
+  margin: 5px 0 0;
+  display: block;
+  font-size: 11px;
 }
 
 /* 接单状态开关。原生 checkbox 保存真实状态，轨道和圆点只负责视觉表现。 */
@@ -1666,8 +2019,141 @@ tr:last-child td {
   border-radius: 8px;
   background: #e8eeea;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
+}
+
+.employee-profile-reminder {
+  margin-top: 12px;
+  padding: 9px 12px;
+  border-left: 3px solid var(--accent);
+  background: #fff8ee;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.employee-profile-reminder button {
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  flex: 0 0 auto;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.employee-profile-page {
+  margin-top: 24px;
+}
+
+.profile-heading > span {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.employee-profile-form {
+  padding: 26px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  align-items: start;
+  gap: 34px;
+  box-shadow: 0 10px 28px rgba(37, 48, 44, 0.06);
+}
+
+.employee-avatar-editor {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 10px;
+  text-align: center;
+}
+
+.employee-avatar-preview {
+  width: 150px;
+  height: 150px;
+  margin-bottom: 6px;
+  border: 4px solid #e2ebe5;
+  border-radius: 50%;
+  background: #e8f0eb;
+  color: var(--primary);
+  display: grid;
+  place-items: center;
+  font-size: 54px;
+  font-weight: 800;
+  overflow: hidden;
+}
+
+.employee-avatar-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.avatar-upload-button {
+  position: relative;
+  width: 150px;
+}
+
+.employee-avatar-editor > .btn.ghost {
+  min-height: 32px;
+}
+
+.employee-avatar-editor > small {
+  max-width: 180px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.employee-profile-fields .field > span {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.employee-profile-fields input,
+.employee-profile-fields textarea {
+  min-height: 48px;
+  font-size: 16px;
+}
+
+.employee-profile-fields input:disabled {
+  background: #f0f3f1;
+  color: var(--muted);
+}
+
+.profile-field-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 0.45fr);
+  gap: 14px;
+}
+
+.profile-save-bar {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.profile-save-bar span {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.profile-save-bar .btn {
+  min-width: 180px;
+  min-height: 48px;
 }
 
 .employee-view-tabs button,
@@ -1735,6 +2221,14 @@ tr:last-child td {
   display: block;
 }
 
+.task-date-block small {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
 .task-date-block span,
 .task-address span {
   margin-bottom: 6px;
@@ -1777,6 +2271,26 @@ tr:last-child td {
 
 .task-address strong {
   font-size: 17px;
+}
+
+.task-amount {
+  margin-top: 10px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.task-amount span {
+  color: var(--muted);
+}
+
+.task-amount strong {
+  color: var(--accent);
+  font-size: 19px;
 }
 
 .employee-task-actions {
@@ -1830,8 +2344,14 @@ tr:last-child td {
   grid-column: 1 / -1;
 }
 
+.employee-task-card .cancellation-note {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+
 .employee-task-date strong,
 .employee-task-date span,
+.employee-task-date small,
 .employee-task-client span,
 .employee-task-client strong,
 .employee-task-client small {
@@ -1845,8 +2365,15 @@ tr:last-child td {
 }
 
 .employee-task-date span {
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 700;
+}
+
+.employee-task-date small {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
 }
 
 .employee-task-client span {
@@ -1920,7 +2447,7 @@ tr:last-child td {
   padding: 0;
   list-style: none;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .training-progress li {
@@ -2196,10 +2723,6 @@ tr:last-child td {
   box-shadow: 0 10px 28px rgba(37, 48, 44, 0.06);
 }
 
-.employee-availability .training-progress {
-  margin: 18px 0 24px;
-}
-
 .availability-note {
   color: var(--muted);
   font-size: 14px;
@@ -2210,7 +2733,7 @@ tr:last-child td {
   border: 1px solid var(--line);
   border-radius: 8px;
   display: grid;
-  grid-template-columns: 132px repeat(3, minmax(150px, 1fr));
+  grid-template-columns: 140px repeat(7, minmax(105px, 1fr));
 }
 
 .availability-grid > * {
@@ -2220,17 +2743,17 @@ tr:last-child td {
   border-bottom: 1px solid var(--line);
 }
 
-.availability-grid > :nth-child(4n) {
+.availability-grid > :nth-child(8n) {
   border-right: 0;
 }
 
-.availability-grid > :nth-last-child(-n + 4) {
+.availability-grid > :nth-last-child(-n + 8) {
   border-bottom: 0;
 }
 
 .availability-corner,
 .availability-heading,
-.availability-day {
+.availability-period {
   padding: 10px 12px;
   background: #f2f5f2;
   display: flex;
@@ -2240,7 +2763,7 @@ tr:last-child td {
 }
 
 .availability-corner,
-.availability-day {
+.availability-period {
   font-weight: 800;
 }
 
@@ -2249,11 +2772,16 @@ tr:last-child td {
 }
 
 .availability-heading strong,
-.availability-heading small {
+.availability-period strong,
+.availability-period small {
   display: block;
 }
 
-.availability-heading small {
+.availability-period {
+  flex-direction: column;
+}
+
+.availability-period small {
   margin-top: 3px;
   color: var(--muted);
 }
@@ -2374,8 +2902,16 @@ tr:last-child td {
     grid-template-columns: 1fr;
   }
 
+  .employee-profile-form {
+    grid-template-columns: 1fr;
+  }
+
   .training-module-list {
     grid-template-columns: 1fr;
+  }
+
+  .booking-time-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -2528,6 +3064,20 @@ tr:last-child td {
     justify-content: center;
   }
 
+  .booking-time-heading,
+  .booking-time-summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .booking-time-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .booking-price {
+    text-align: left;
+  }
+
   .custom-date-choice .senior-primary,
   .appointment-card-actions .btn {
     width: 100%;
@@ -2587,6 +3137,24 @@ tr:last-child td {
     padding: 2px 10px;
   }
 
+  .employee-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 12px;
+  }
+
+  .employee-metrics > div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .employee-metrics > div:nth-child(n + 3) {
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+  }
+
+  .employee-metrics > div:nth-child(3) {
+    padding-left: 0;
+  }
+
   .employee-metrics span {
     font-size: 13px;
   }
@@ -2597,6 +3165,41 @@ tr:last-child td {
 
   .employee-status-switch {
     padding: 12px;
+  }
+
+  .employee-view-tabs button {
+    padding-left: 6px;
+    padding-right: 6px;
+    font-size: 14px;
+  }
+
+  .employee-profile-reminder,
+  .profile-save-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .employee-profile-reminder button {
+    width: fit-content;
+  }
+
+  .employee-profile-form {
+    padding: 20px 15px;
+    gap: 24px;
+  }
+
+  .profile-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .profile-field-grid {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .profile-save-bar .btn {
+    width: 100%;
   }
 
   .employee-task-filter {
@@ -2678,11 +3281,24 @@ tr:last-child td {
   }
 
   .availability-grid {
-    min-width: 680px;
+    min-width: 980px;
   }
 
   .availability-save {
-    min-width: 680px;
+    min-width: 980px;
     justify-content: space-between;
+  }
+
+  .cancel-reason-dialog form {
+    padding: 21px 16px;
+  }
+
+  .cancel-reason-dialog footer {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .cancel-reason-dialog footer .btn {
+    width: 100%;
   }
 }

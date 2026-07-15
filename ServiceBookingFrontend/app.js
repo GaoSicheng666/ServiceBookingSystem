@@ -3,6 +3,14 @@
 // 后端 REST API 的固定根地址。后续请求只需要传入 /auth/login 等相对路径。
 const DEFAULT_API_BASE = "http://121.40.96.66:8080/api";
 
+// 一天分为四个固定服务时段，护工排班和老人预约共用同一组代码与显示文案。
+const TIME_PERIODS = [
+  ["MORNING", "早间", "06:00-10:00"],
+  ["NOON", "中午", "10:00-14:00"],
+  ["AFTERNOON", "下午", "14:00-18:00"],
+  ["EVENING", "晚上", "18:00-22:00"]
+];
+
 /*
  * 全局状态对象，是这个单页应用的数据中心。
  * token、role、name 根据“记住密码”选择从 localStorage 或 sessionStorage 恢复；
@@ -22,9 +30,11 @@ const state = {
   employeeView: "today",
   bookingStep: 1,
   selectedDate: today(),
+  selectedTimePeriods: [],
   selectedServiceId: "",
   selectedEmployeeId: "",
   employeeQuizResult: null,
+  pendingEmployeeAvatar: null,
   data: {}
 };
 
@@ -66,6 +76,10 @@ document.addEventListener("submit", async (event) => {
     if (action === "create-service") await createService(payload);
     if (action === "employee-quiz") await submitEmployeeQuiz(payload);
     if (action === "employee-schedule") await saveEmployeeAvailability(form);
+    if (action === "employee-profile") await saveEmployeeProfile(payload);
+    if (action === "employee-cancel-reason") {
+      await submitEmployeeCancellation(form.dataset.appointmentId, payload);
+    }
   } catch (error) {
     notify(error.message, "error");
   } finally {
@@ -130,6 +144,10 @@ document.addEventListener("click", async (event) => {
       selectBookingDate(button.dataset.date);
       return;
     }
+    if (action === "select-booking-period") {
+      toggleBookingPeriod(button.dataset.period);
+      return;
+    }
     if (action === "use-custom-date") {
       await confirmBookingDate();
       return;
@@ -170,6 +188,10 @@ document.addEventListener("click", async (event) => {
       await showEmployeeView(button.dataset.view);
       return;
     }
+    if (action === "remove-employee-avatar") {
+      removeEmployeeAvatarPreview();
+      return;
+    }
     if (action === "employee-task-filter") {
       await filterEmployeeTasks(button.dataset.status || "");
       return;
@@ -179,7 +201,15 @@ document.addEventListener("click", async (event) => {
       return;
     }
     if (action === "employee-cancel") {
-      await employeeCancel(button.dataset.id);
+      openEmployeeCancelDialog(button.dataset.id);
+      return;
+    }
+    if (action === "close-cancel-dialog") {
+      closeEmployeeCancelDialog();
+      return;
+    }
+    if (action === "show-phone") {
+      showContactPhone(button.dataset.phone, button.dataset.name);
       return;
     }
     if (action === "navigate") {
@@ -231,6 +261,14 @@ document.addEventListener("click", async (event) => {
  */
 document.addEventListener("change", async (event) => {
   const target = event.target;
+  if (target.id === "employeeAvatarInput") {
+    try {
+      await previewEmployeeAvatar(target.files?.[0]);
+    } catch (error) {
+      target.value = "";
+      notify(error.message, "error");
+    }
+  }
   if (target.id === "employeeWorkingToggle") {
     target.disabled = true;
     try {
@@ -251,9 +289,25 @@ document.addEventListener("change", async (event) => {
     const counter = scheduleForm.querySelector("[data-availability-count]");
     if (counter) counter.textContent = scheduleForm.querySelectorAll('input[name="slot"]:checked').length;
   }
+  if (target.matches('form[data-submit="employee-cancel-reason"] input[name="cancelReason"]')) {
+    const customField = target.form.querySelector("[data-custom-cancel-reason]");
+    const customInput = customField?.querySelector("textarea");
+    const usesCustomReason = target.value === "OTHER";
+    if (customField) customField.hidden = !usesCustomReason;
+    if (customInput) {
+      customInput.required = usesCustomReason;
+      if (usesCustomReason) customInput.focus();
+      else customInput.value = "";
+    }
+  }
   if (target.id === "registerRole") renderRegisterRoleFields(target.value);
   if (target.id === "serviceSelect") state.selectedServiceId = target.value;
   if (target.id === "bookingDate") {
+    if (state.selectedDate !== target.value) {
+      state.selectedTimePeriods = [];
+      state.selectedEmployeeId = "";
+      state.data.availableEmployees = [];
+    }
     state.selectedDate = target.value;
     renderUserDashboard();
   }
@@ -435,7 +489,7 @@ function renderAuth() {
 
 /**
  * 根据注册角色补充差异字段。
- * 老人用户填写居住地址；护工填写薪资要求且年龄下限调整为 18 岁。
+ * 老人用户填写居住地址；护工没有额外注册字段，但年龄下限调整为 18 岁。
  * @param {string} role 后端约定的角色值：USER 或 EMPLOYEE。
  */
 function renderRegisterRoleFields(role) {
@@ -447,14 +501,7 @@ function renderRegisterRoleFields(role) {
     ageInput.placeholder = role === "EMPLOYEE" ? "护工年龄需满18岁" : "请输入年龄";
   }
   if (role === "EMPLOYEE") {
-    box.innerHTML = `
-      <label class="field">
-        <span>薪资要求</span>
-        <div class="register-control">
-          <input name="salary" data-register-rule="salary" type="number" min="0" step="0.01" required inputmode="decimal" aria-describedby="register-hint-salary" placeholder="请输入薪资要求">
-          ${registerHint("salary")}
-        </div>
-      </label>`;
+    box.innerHTML = "";
   } else {
     box.innerHTML = `
       <label class="field">
@@ -576,12 +623,6 @@ function registerFieldFeedback(input) {
     return { message: "已符合要求", valid: true };
   }
 
-  if (rule === "salary") {
-    if (!value) return { message: "请输入不小于0的金额", valid: false };
-    if (Number(value) < 0) return { message: "薪资不能小于0元", valid: false };
-    return { message: "已符合要求", valid: true };
-  }
-
   return { message: "请检查输入内容是否正确", valid: false };
 }
 
@@ -693,14 +734,13 @@ async function login(body) {
 
 /**
  * 注册老人或护工账号。
- * number 类型的表单值默认是字符串，因此提交前把年龄和薪资显式转换为数字。
+ * number 类型的表单值默认是字符串，因此提交前把年龄显式转换为数字。
  * @param {Object} body 注册表单收集到的用户资料。
  */
 async function register(body) {
   // 确认密码只用于浏览器端比较，不属于后端注册 DTO，提交前必须移除。
   delete body.confirmPassword;
   body.age = Number(body.age);
-  if (body.salary !== undefined) body.salary = Number(body.salary);
   await api("/auth/register", { method: "POST", body, auth: false });
   notify("注册成功，请登录", "success");
   state.authMode = "login";
@@ -711,7 +751,7 @@ async function register(body) {
  * 清除前端会话和临时业务状态，并返回登录页。
  * 这里只清理当前浏览器中的 JWT，不会删除后端账号、业务数据或浏览器密码管理器中的信息。
  */
-function logout() {
+function logout(message = "已退出登录") {
   state.token = "";
   state.role = "";
   state.name = "";
@@ -719,11 +759,15 @@ function logout() {
   state.appointmentsFilter = "";
   state.userView = "home";
   state.employeeView = "today";
+  state.pendingEmployeeAvatar = null;
   state.bookingStep = 1;
+  state.selectedDate = "";
+  state.selectedTimePeriods = [];
+  state.selectedServiceId = "";
   state.selectedEmployeeId = "";
   clearStoredSession();
   render();
-  notify("已退出登录", "success");
+  notify(message, message === "已退出登录" ? "success" : "error");
 }
 
 /**
@@ -755,7 +799,7 @@ async function refreshDashboard() {
 }
 
 /* ==================== 老人用户端 ====================
- * 老人端只展示完成预约所必需的信息，并把预约拆成“服务、日期、人员、确认”四步。
+ * 老人端只展示完成预约所必需的信息，并把预约拆成“服务、日期时段、人员、确认”四步。
  */
 
 /** 同时加载老人资料、可预约服务和本人的预约记录，并写入 state.data。 */
@@ -771,12 +815,14 @@ async function loadUserDashboard() {
 }
 
 /**
- * 根据已选日期查询当天可预约的护工。
+ * 根据已选日期和全部所选时段查询可预约的护工。
  * @param {boolean} showMessage 是否在查询完成后显示成功提示。
  */
 async function loadAvailableEmployees(showMessage = true) {
   const date = state.selectedDate || today();
-  const employees = await api(`/employees/available?date=${encodeURIComponent(date)}`);
+  const params = new URLSearchParams({ date });
+  state.selectedTimePeriods.forEach((period) => params.append("timePeriod", period));
+  const employees = await api(`/employees/available?${params.toString()}`);
   state.data.availableEmployees = employees;
   if (showMessage) notify("服务人员已更新", "success");
 }
@@ -813,7 +859,7 @@ function renderUserDashboard() {
       <div class="senior-entry-list">
         <button class="senior-entry" type="button" data-action="start-booking">
           <span class="senior-entry-symbol" aria-hidden="true">＋</span>
-          <span><strong>立即预约服务</strong><small>选择服务、日期和服务人员</small></span>
+          <span><strong>立即预约服务</strong><small>选择服务、日期、时间和服务人员</small></span>
           <span class="senior-entry-arrow" aria-hidden="true">›</span>
         </button>
         <button class="senior-entry" type="button" data-action="show-user-appointments">
@@ -826,12 +872,13 @@ function renderUserDashboard() {
   `;
 }
 
-/** 进入新的预约流程，并清空上一次尚未提交的服务和护工选择。 */
+/** 进入新的预约流程，并清空上一次尚未提交的服务、时段和护工选择。 */
 function startBooking() {
   state.userView = "booking";
   state.bookingStep = 1;
   state.selectedServiceId = "";
   state.selectedDate = "";
+  state.selectedTimePeriods = [];
   state.selectedEmployeeId = "";
   state.data.availableEmployees = [];
   renderUserDashboard();
@@ -864,29 +911,53 @@ async function filterUserAppointments(status) {
   renderUserDashboard();
 }
 
-/** 保存选中的服务项目并进入日期选择步骤。 */
+/** 保存选中的服务项目并进入日期、时段选择步骤。 */
 function selectBookingService(serviceId) {
   state.selectedServiceId = serviceId;
   state.selectedDate = "";
+  state.selectedTimePeriods = [];
+  state.selectedEmployeeId = "";
+  state.data.availableEmployees = [];
   state.bookingStep = 2;
   renderUserDashboard();
 }
 
-/** 只保存当前选中的服务日期并留在第二步，等待用户点击“下一步”确认。 */
+/** 保存当前日期并留在第二步，继续等待用户选择一个或多个服务时段。 */
 function selectBookingDate(date) {
   if (!date) throw new Error("请选择服务日期");
+  if (state.selectedDate !== date) {
+    state.selectedTimePeriods = [];
+    state.selectedEmployeeId = "";
+    state.data.availableEmployees = [];
+  }
   state.selectedDate = date;
+  renderUserDashboard();
+}
+
+/** 在第二步选中或取消一个服务时段；更改后必须重新查询可预约护工。 */
+function toggleBookingPeriod(period) {
+  if (!TIME_PERIODS.some(([value]) => value === period)) {
+    throw new Error("服务时段无效");
+  }
+  const selected = new Set(state.selectedTimePeriods);
+  if (selected.has(period)) selected.delete(period);
+  else selected.add(period);
+  state.selectedTimePeriods = TIME_PERIODS
+    .map(([value]) => value)
+    .filter((value) => selected.has(value));
   state.selectedEmployeeId = "";
+  state.data.availableEmployees = [];
   renderUserDashboard();
 }
 
 /**
- * 确认第二步选中的日期，查询当日可用护工后再进入第三步。
- * 选择与确认分开，避免老人误触日期卡片后立即离开当前页面。
+ * 确认第二步选中的日期和时段，查询全部所选时段均可用的护工后再进入第三步。
+ * 选择与确认分开，避免老人误触日期或时段后立即离开当前页面。
  */
 async function confirmBookingDate() {
   if (!state.selectedDate) throw new Error("请先选择服务日期");
   if (state.selectedDate < today()) throw new Error("不能选择过去的日期");
+  if (!state.selectedTimePeriods.length) throw new Error("请至少选择一个服务时段");
   state.bookingStep = 3;
   state.selectedEmployeeId = "";
   await loadAvailableEmployees(false);
@@ -923,11 +994,11 @@ function bookingBack() {
  */
 function renderBookingWizard(services, employees) {
   const step = state.bookingStep;
-  const headings = ["您需要什么服务？", "您希望哪天服务？", "选择服务人员", "确认预约信息"];
+  const headings = ["您需要什么服务？", "选择服务日期和时间", "选择服务人员", "确认预约信息"];
   let body = "";
 
   if (step === 1) body = renderServiceChoices(services);
-  if (step === 2) body = renderDateChoices();
+  if (step === 2) body = renderDateChoices(services);
   if (step === 3) body = renderStaffChoices(employees);
   if (step === 4) body = renderBookingConfirmation(services, employees);
 
@@ -946,7 +1017,7 @@ function renderBookingWizard(services, employees) {
 
 /** 根据当前步骤生成四段进度指示，已完成和当前步骤使用 active 类名。 */
 function renderBookingProgress(step) {
-  const labels = ["选服务", "选日期", "选人员", "确认"];
+  const labels = ["选服务", "选日期时段", "选人员", "确认"];
   return `<div class="booking-progress" aria-label="预约进度">${labels.map((label, index) => `
     <div class="${index + 1 <= step ? "active" : ""}"><span>${index + 1}</span><small>${label}</small></div>
   `).join("")}</div>`;
@@ -964,10 +1035,13 @@ function renderServiceChoices(services) {
   `).join("")}</div>`;
 }
 
-/** 提供今天、明天、后天三个快捷日期以及原生日期选择器。 */
-function renderDateChoices() {
+/** 提供日期选择、四个可多选服务时段，以及按照时段数计算的预计费用。 */
+function renderDateChoices(services) {
   const dates = [0, 1, 2].map((offset) => offsetDate(offset));
   const names = ["今天", "明天", "后天"];
+  const service = services.find((item) => String(item.id) === String(state.selectedServiceId));
+  const slotCount = state.selectedTimePeriods.length;
+  const totalAmount = calculateBookingTotal(service, slotCount);
   return `
     <div class="date-choice-grid">
       ${dates.map((date, index) => `
@@ -977,7 +1051,31 @@ function renderDateChoices() {
     </div>
     <div class="custom-date-choice">
       <label class="field"><span>选择其他日期</span><input id="bookingDate" type="date" min="${today()}" value="${escapeHtml(state.selectedDate)}" required aria-label="选择其他服务日期"></label>
-      <button class="btn senior-primary date-next-button" type="button" data-action="use-custom-date" ${state.selectedDate ? "" : "disabled"}>下一步：选择服务人员</button>
+    </div>
+    <section class="booking-time-section" aria-labelledby="booking-time-title">
+      <div class="booking-time-heading">
+        <h4 id="booking-time-title">选择服务时段</h4>
+        <span>可以选择一个或多个时段</span>
+      </div>
+      <div class="booking-time-grid">
+        ${TIME_PERIODS.map(([value, label, time]) => {
+          const selected = state.selectedTimePeriods.includes(value);
+          return `<button class="booking-time-choice ${selected ? "selected" : ""}" type="button" data-action="select-booking-period" data-period="${value}" aria-pressed="${selected}" ${state.selectedDate ? "" : "disabled"}>
+            <strong>${label}</strong><span>${time}</span><b aria-hidden="true">✓</b>
+          </button>`;
+        }).join("")}
+      </div>
+      <div class="booking-time-summary">
+        <p>${state.selectedDate
+          ? slotCount
+            ? `已选择 <strong>${slotCount}</strong> 个时段：${formatTimePeriods(state.selectedTimePeriods)}`
+            : "请选择至少一个服务时段"
+          : "请先选择服务日期"}</p>
+        <p class="booking-price">预计费用：<strong>¥${formatMoney(totalAmount)}</strong><small>¥${formatMoney(service?.referencePrice)} × ${slotCount} 个时段</small></p>
+      </div>
+    </section>
+    <div class="booking-step-action">
+      <button class="btn senior-primary date-next-button" type="button" data-action="use-custom-date" ${state.selectedDate && slotCount ? "" : "disabled"}>下一步：选择服务人员</button>
     </div>
   `;
 }
@@ -989,8 +1087,8 @@ function renderDateChoices() {
 function renderStaffChoices(employees) {
   if (!employees.length) return `
     <div class="senior-empty">
-      <strong>${formatFriendlyDate(state.selectedDate)} 暂无可预约人员</strong>
-      <p>请返回上一步选择其他日期。</p>
+      <strong>${formatFriendlyDate(state.selectedDate)} 所选时段暂无可预约人员</strong>
+      <p>${formatTimePeriods(state.selectedTimePeriods)}，请返回上一步调整日期或时段。</p>
     </div>
   `;
   const selectedEmployee = employees.find((employee) => String(employee.id) === String(state.selectedEmployeeId));
@@ -1000,8 +1098,8 @@ function renderStaffChoices(employees) {
       return `
         <article class="staff-choice-card ${selected ? "selected" : ""}">
           <button class="staff-choice" type="button" data-action="choose-employee" data-employee-id="${employee.id}" aria-expanded="${selected}" aria-pressed="${selected}">
-            <span class="staff-avatar" aria-hidden="true">${escapeHtml(firstCharacter(employee.name))}</span>
-            <span class="staff-choice-copy"><strong>${escapeHtml(employee.name)}</strong><small>平台服务人员 · 当日可预约</small></span>
+            <span class="staff-avatar">${renderEmployeeAvatarContent(employee)}</span>
+            <span class="staff-choice-copy"><strong>${escapeHtml(employee.name)}</strong><small>${escapeHtml(employee.specialty || "平台服务人员")} · 所选时段均可预约</small></span>
             <span class="staff-expand" aria-hidden="true">⌄</span>
           </button>
           ${selected ? renderStaffBasicInfo(employee) : ""}
@@ -1026,7 +1124,11 @@ function renderStaffBasicInfo(employee) {
         <div><dt>年龄</dt><dd>${age}</dd></div>
         <div><dt>接单状态</dt><dd>正在接单</dd></div>
         <div><dt>可预约日期</dt><dd>${formatFriendlyDate(state.selectedDate)}</dd></div>
+        <div class="staff-info-wide"><dt>可预约时间</dt><dd>${formatTimePeriods(state.selectedTimePeriods)}</dd></div>
+        <div class="staff-info-wide"><dt>擅长服务</dt><dd>${escapeHtml(employee.specialty || "暂未填写")}</dd></div>
+        <div class="staff-info-wide"><dt>从业经历</dt><dd>${escapeHtml(employee.experience || "暂未填写")}</dd></div>
       </dl>
+      ${employee.bio ? `<p class="staff-bio">${escapeHtml(employee.bio)}</p>` : ""}
       <p>联系电话将在预约成功后显示</p>
     </div>`;
 }
@@ -1039,12 +1141,17 @@ function renderBookingConfirmation(services, employees) {
   const service = services.find((item) => String(item.id) === String(state.selectedServiceId));
   const employee = employees.find((item) => String(item.id) === String(state.selectedEmployeeId));
   if (!service || !employee) return `<div class="senior-empty">预约信息不完整，请返回上一步重新选择。</div>`;
+  const slotCount = state.selectedTimePeriods.length;
+  const totalAmount = calculateBookingTotal(service, slotCount);
   return `
     <div class="booking-summary">
       <dl>
         <div><dt>服务项目</dt><dd>${escapeHtml(service.name)}</dd></div>
         <div><dt>服务日期</dt><dd>${formatFriendlyDate(state.selectedDate)}</dd></div>
+        <div><dt>服务时间</dt><dd>${formatTimePeriods(state.selectedTimePeriods)}</dd></div>
         <div><dt>服务人员</dt><dd>${escapeHtml(employee.name)}</dd></div>
+        <div><dt>费用计算</dt><dd>¥${formatMoney(service.referencePrice)} × ${slotCount} 个时段</dd></div>
+        <div class="booking-summary-total"><dt>预约总额</dt><dd>¥${formatMoney(totalAmount)}</dd></div>
       </dl>
       <button class="btn senior-primary confirm-booking" type="button" data-action="confirm-booking">确认预约</button>
     </div>
@@ -1080,10 +1187,13 @@ function renderUserAppointmentCard(item) {
         ${seniorStatusBadge(item.status)}
       </div>
       <p class="appointment-date">${formatFriendlyDate(item.appointmentDate)}</p>
+      <p class="appointment-time">${formatTimePeriods(item.timePeriods)}</p>
       <div class="appointment-person">
         <p><span>服务人员</span><strong>${escapeHtml(item.employeeName)}</strong></p>
         ${item.employeePhone ? `<p><span>联系电话</span><strong>${escapeHtml(item.employeePhone)}</strong></p>` : ""}
+        <p><span>预约金额</span><strong>¥${formatMoney(item.totalAmount)}</strong></p>
       </div>
+      ${renderCancellationReason(item)}
       ${item.status === "PENDING" ? `<div class="appointment-card-actions"><button class="btn danger" type="button" data-action="cancel-user" data-id="${item.id}">取消这个预约</button></div>` : ""}
     </article>
   `;
@@ -1096,6 +1206,17 @@ function seniorStatusBadge(status) {
   return `<span class="senior-status pending">● 已预约，等待服务</span>`;
 }
 
+/** 取消后的预约显示发起方和原因；旧数据没有原因时保持为空。 */
+function renderCancellationReason(item, compact = false) {
+  if (item.status !== "CANCELLED" || !item.cancellationReason) return "";
+  const actor = item.cancelledBy === "EMPLOYEE" ? "护工取消原因" : "取消原因";
+  return `
+    <div class="cancellation-note ${compact ? "compact" : ""}">
+      <span>${actor}</span>
+      <strong>${escapeHtml(item.cancellationReason)}</strong>
+    </div>`;
+}
+
 /**
  * 提交新预约。
  * 前端先检查服务和护工是否已选，再把 ID 转成数字并发送给后端；
@@ -1103,6 +1224,8 @@ function seniorStatusBadge(status) {
  */
 async function bookEmployee(employeeId) {
   if (!state.selectedServiceId) throw new Error("请先选择服务项目");
+  if (!state.selectedDate) throw new Error("请先选择服务日期");
+  if (!state.selectedTimePeriods.length) throw new Error("请至少选择一个服务时段");
   if (!employeeId) throw new Error("请选择服务人员");
   const date = state.selectedDate || today();
   await api("/appointments", {
@@ -1110,13 +1233,17 @@ async function bookEmployee(employeeId) {
     body: {
       employeeId: Number(employeeId),
       serviceId: Number(state.selectedServiceId),
-      appointmentDate: date
+      appointmentDate: date,
+      timePeriods: state.selectedTimePeriods
     }
   });
   notify("预约成功", "success");
   state.userView = "appointments";
   state.bookingStep = 1;
   state.appointmentsFilter = "";
+  state.selectedDate = "";
+  state.selectedTimePeriods = [];
+  state.selectedServiceId = "";
   state.selectedEmployeeId = "";
   await loadUserDashboard();
   renderUserDashboard();
@@ -1145,19 +1272,22 @@ async function loadEmployeeDashboard() {
   state.data.employeeAppointments = [];
   state.data.employeeAllAppointments = [];
   state.data.employeeAvailability = [];
+  state.data.employeeEarnings = 0;
 
   // 未完成学习或尚未通过答题时只需要个人培训状态，不请求工作台数据。
-  if (!me.quizPassed) return;
+  if (!me.quizPassed || state.employeeView === "profile") return;
 
   const query = state.employeeView === "all" ? statusQuery() : "";
-  const [appointments, allAppointments, availability] = await Promise.all([
+  const [appointments, allAppointments, availability, earnings] = await Promise.all([
     api(`/employees/me/appointments${query}`),
     query ? api("/employees/me/appointments") : Promise.resolve(null),
-    api("/employees/me/availability")
+    api("/employees/me/availability"),
+    api("/employees/me/earnings")
   ]);
   state.data.employeeAppointments = appointments;
   state.data.employeeAllAppointments = allAppointments || appointments;
   state.data.employeeAvailability = availability || [];
+  state.data.employeeEarnings = Number(earnings || 0);
 }
 
 /**
@@ -1175,25 +1305,39 @@ function renderEmployeeDashboard() {
     return;
   }
 
+  el.viewActions.innerHTML = "";
+  if (state.employeeView === "profile") {
+    el.viewEyebrow.textContent = "护工个人中心";
+    el.viewTitle.textContent = "个人信息";
+    el.content.innerHTML = `
+      <div class="employee-workbench">
+        ${renderEmployeeViewTabs()}
+        ${renderEmployeeProfile(employee)}
+      </div>`;
+    return;
+  }
+
   const appointments = state.data.employeeAppointments || [];
   const allAppointments = state.data.employeeAllAppointments || appointments;
   const todayTasks = allAppointments.filter((item) => item.appointmentDate === today());
   const pendingTasks = allAppointments.filter((item) => item.status === "PENDING");
   const completedToday = todayTasks.filter((item) => item.status === "COMPLETED").length;
+  const earnings = state.data.employeeEarnings || 0;
   const nextTask = [...pendingTasks]
     .sort((a, b) => String(a.appointmentDate).localeCompare(String(b.appointmentDate)))
     .find((item) => item.appointmentDate >= today()) || pendingTasks[0];
 
   el.viewEyebrow.textContent = "护工任务中心";
   el.viewTitle.textContent = `${timeGreeting()}，${employee.name || state.name || "您好"}`;
-  el.viewActions.innerHTML = "";
   el.content.innerHTML = `
     <div class="employee-workbench">
+      ${renderEmployeeViewTabs()}
       <section class="employee-overview">
         <div class="employee-metrics" aria-label="任务概况">
           <div><span>今日任务</span><strong>${todayTasks.length}</strong><small>项</small></div>
           <div><span>待服务</span><strong>${pendingTasks.length}</strong><small>项</small></div>
           <div><span>今日完成</span><strong>${completedToday}</strong><small>项</small></div>
+          <div class="income-metric"><span>已获得薪资总额</span><strong>¥${formatMoney(earnings)}</strong><small>按已完成服务参考价统计</small></div>
         </div>
         <label class="employee-status-switch">
           <input id="employeeWorkingToggle" type="checkbox" ${employee.working ? "checked" : ""}>
@@ -1205,18 +1349,73 @@ function renderEmployeeDashboard() {
         </label>
       </section>
 
-      ${renderEmployeeAvailability()}
+      <div class="employee-profile-reminder">
+        <span>请前往“个人信息”确认或修改头像、联系电话和服务介绍，完整资料有助于老人选择服务人员。</span>
+        <button type="button" data-action="employee-view" data-view="profile">前往个人信息</button>
+      </div>
 
-      <nav class="employee-view-tabs" aria-label="任务视图">
-        <button type="button" class="${state.employeeView === "today" ? "active" : ""}" data-action="employee-view" data-view="today">任务首页</button>
-        <button type="button" class="${state.employeeView === "all" ? "active" : ""}" data-action="employee-view" data-view="all">全部任务</button>
-      </nav>
+      ${renderEmployeeAvailability()}
 
       ${state.employeeView === "all"
         ? renderAllEmployeeTasks(appointments)
         : renderEmployeeTodayView(nextTask, todayTasks)}
     </div>
   `;
+}
+
+/** 护工工作区的三个一级入口。 */
+function renderEmployeeViewTabs() {
+  const tabs = [
+    ["today", "任务首页"],
+    ["all", "全部任务"],
+    ["profile", "个人信息"]
+  ];
+  return `
+    <nav class="employee-view-tabs" aria-label="护工工作区">
+      ${tabs.map(([view, label]) => `<button type="button" class="${state.employeeView === view ? "active" : ""}" data-action="employee-view" data-view="${view}">${label}</button>`).join("")}
+    </nav>`;
+}
+
+/** 生成可修改的护工个人资料页。 */
+function renderEmployeeProfile(employee) {
+  const previewEmployee = {
+    ...employee,
+    avatarData: state.pendingEmployeeAvatar === null
+      ? employee.avatarData
+      : state.pendingEmployeeAvatar
+  };
+  return `
+    <section class="employee-profile-page">
+      <header class="employee-section-heading profile-heading">
+        <div><p>公开资料</p><h3>确认并完善个人信息</h3></div>
+        <span>姓名、头像和服务介绍会展示给预约老人</span>
+      </header>
+      <form class="employee-profile-form" data-submit="employee-profile">
+        <aside class="employee-avatar-editor">
+          <div id="employeeAvatarPreview" class="employee-avatar-preview">
+            ${renderEmployeeAvatarContent(previewEmployee)}
+          </div>
+          <label class="btn secondary avatar-upload-button">
+            选择头像
+            <input id="employeeAvatarInput" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+          </label>
+          <button class="btn ghost" type="button" data-action="remove-employee-avatar">移除头像</button>
+          <small>支持 JPG、PNG、WebP；图片会自动压缩后上传。</small>
+        </aside>
+        <div class="employee-profile-fields">
+          <label class="field"><span>登录账号</span><input value="${attr(employee.username)}" disabled></label>
+          <div class="profile-field-grid">
+            <label class="field"><span>真实姓名</span><input name="name" maxlength="50" value="${attr(employee.name)}" required></label>
+            <label class="field"><span>年龄</span><input name="age" type="number" min="18" max="100" value="${attr(employee.age)}" required></label>
+          </div>
+          <label class="field"><span>联系电话</span><input name="phone" inputmode="numeric" pattern="[0-9]{6,20}" maxlength="20" value="${attr(employee.phone)}" required></label>
+          <label class="field"><span>擅长服务</span><input name="specialty" maxlength="100" value="${attr(employee.specialty)}" placeholder="例如：陪诊、助浴、日常照护"></label>
+          <label class="field"><span>从业经历</span><textarea name="experience" maxlength="200" rows="3" placeholder="例如：从事居家照护5年，熟悉行动不便老人照护">${escapeHtml(employee.experience)}</textarea></label>
+          <label class="field"><span>个人简介</span><textarea name="bio" maxlength="500" rows="4" placeholder="向老人和家属简单介绍您的服务特点">${escapeHtml(employee.bio)}</textarea></label>
+          <div class="profile-save-bar"><span>修改后请及时保存</span><button class="btn" type="submit">保存个人信息</button></div>
+        </div>
+      </form>
+    </section>`;
 }
 
 /**
@@ -1262,9 +1461,9 @@ function renderEmployeeTraining() {
   `;
 }
 
-/** 生成学习、答题和设置时间三个阶段的进度提示。 */
+/** 生成岗前学习和安全答题两个培训阶段的进度提示。 */
 function renderTrainingProgress(activeStep) {
-  const steps = ["岗前学习", "安全答题", "设置时间"];
+  const steps = ["岗前学习", "安全答题"];
   return `
     <ol class="training-progress" aria-label="护工入职进度">
       ${steps.map((label, index) => {
@@ -1353,24 +1552,23 @@ async function submitEmployeeQuiz(answers) {
  */
 function renderEmployeeAvailability() {
   const selected = new Set(state.data.employeeAvailability || []);
-  const days = [[1, "星期一"], [2, "星期二"], [3, "星期三"], [4, "星期四"], [5, "星期五"]];
-  const periods = [["MORNING", "上午", "08:00-12:00"], ["AFTERNOON", "下午", "12:00-18:00"], ["EVENING", "晚上", "18:00-21:00"]];
+  const days = [[1, "星期一"], [2, "星期二"], [3, "星期三"], [4, "星期四"], [5, "星期五"], [6, "星期六"], [7, "星期日"]];
+  const periods = TIME_PERIODS;
   return `
     <section class="employee-availability">
       <div class="employee-section-heading">
-        <div><p>每周工作安排</p><h3>选择可以工作的时间</h3></div>
+        <div><p>工作台功能</p><h3>每周可工作时间</h3></div>
         <span class="availability-note">可多选，修改后请保存</span>
       </div>
-      ${renderTrainingProgress(3)}
       <form data-submit="employee-schedule">
         <div class="availability-grid" role="group" aria-label="每周可工作时段">
-          <div class="availability-corner">工作日</div>
-          ${periods.map(([, label, time]) => `<div class="availability-heading"><strong>${label}</strong><small>${time}</small></div>`).join("")}
-          ${days.map(([day, label]) => `
-            <div class="availability-day">${label}</div>
-            ${periods.map(([period, periodLabel]) => {
+          <div class="availability-corner">时段</div>
+          ${days.map(([, label]) => `<div class="availability-heading"><strong>${label}</strong></div>`).join("")}
+          ${periods.map(([period, periodLabel, time]) => `
+            <div class="availability-period"><strong>${periodLabel}</strong><small>${time}</small></div>
+            ${days.map(([day, dayLabel]) => {
               const value = `${day}_${period}`;
-              return `<label class="availability-slot"><input type="checkbox" name="slot" value="${value}" ${selected.has(value) ? "checked" : ""}><span><b>✓</b>${periodLabel}</span></label>`;
+              return `<label class="availability-slot" title="${dayLabel}${periodLabel}"><input type="checkbox" name="slot" value="${value}" ${selected.has(value) ? "checked" : ""}><span><b>✓</b>${periodLabel}</span></label>`;
             }).join("")}
           `).join("")}
         </div>
@@ -1391,9 +1589,107 @@ async function saveEmployeeAvailability(form) {
 
 /** 在任务首页和全部任务之间切换，并重置旧的状态筛选。 */
 async function showEmployeeView(view) {
-  state.employeeView = view === "all" ? "all" : "today";
+  state.employeeView = ["today", "all", "profile"].includes(view) ? view : "today";
   state.appointmentsFilter = "";
+  state.pendingEmployeeAvatar = null;
   await loadEmployeeDashboard();
+  renderEmployeeDashboard();
+}
+
+/** 返回头像图片；未上传头像时使用姓名首字作为占位。 */
+function renderEmployeeAvatarContent(employee) {
+  if (employee?.avatarData) {
+    return `<img src="${attr(employee.avatarData)}" alt="${attr(employee.name || "护工")}的头像">`;
+  }
+  return `<span aria-hidden="true">${escapeHtml(firstCharacter(employee?.name))}</span>`;
+}
+
+/** 读取并压缩护工选择的头像，在保存前先更新页面预览。 */
+async function previewEmployeeAvatar(file) {
+  if (!file) return;
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+    throw new Error("请选择 JPG、PNG 或 WebP 图片");
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    throw new Error("原始头像不能超过5MB");
+  }
+
+  const avatarData = await compressEmployeeAvatar(file);
+  if (avatarData.length > 800000) {
+    throw new Error("头像压缩后仍然过大，请选择尺寸更小的图片");
+  }
+  state.pendingEmployeeAvatar = avatarData;
+  updateEmployeeAvatarPreview();
+}
+
+/** 把头像最长边缩放到512像素，并使用 WebP 压缩，减少接口和数据库负担。 */
+function compressEmployeeAvatar(file) {
+  return new Promise((resolve, reject) => {
+    const imageUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      try {
+        const maxSide = 512;
+        const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+        const context = canvas.getContext("2d");
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/webp", 0.82));
+      } catch (_) {
+        reject(new Error("头像处理失败，请重新选择图片"));
+      } finally {
+        URL.revokeObjectURL(imageUrl);
+      }
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(imageUrl);
+      reject(new Error("无法读取这张图片，请重新选择"));
+    };
+    image.src = imageUrl;
+  });
+}
+
+/** 清除当前头像预览，保存个人信息后才会同步到后端。 */
+function removeEmployeeAvatarPreview() {
+  state.pendingEmployeeAvatar = "";
+  const fileInput = document.getElementById("employeeAvatarInput");
+  if (fileInput) fileInput.value = "";
+  updateEmployeeAvatarPreview();
+}
+
+/** 只刷新头像区域，避免护工正在编辑的其他表单字段丢失。 */
+function updateEmployeeAvatarPreview() {
+  const preview = document.getElementById("employeeAvatarPreview");
+  if (!preview) return;
+  preview.innerHTML = renderEmployeeAvatarContent({
+    ...(state.data.employee || {}),
+    avatarData: state.pendingEmployeeAvatar
+  });
+}
+
+/** 保存护工基本信息、公开介绍以及本次新选择的头像。 */
+async function saveEmployeeProfile(payload) {
+  const body = {
+    name: String(payload.name || "").trim(),
+    age: Number(payload.age),
+    phone: String(payload.phone || "").trim(),
+    specialty: String(payload.specialty || "").trim(),
+    experience: String(payload.experience || "").trim(),
+    bio: String(payload.bio || "").trim()
+  };
+  if (state.pendingEmployeeAvatar !== null) {
+    body.avatarData = state.pendingEmployeeAvatar;
+  }
+  await api("/employees/me/profile", { method: "PUT", body });
+  state.name = body.name;
+  if (localStorage.getItem("eldercare.token")) localStorage.setItem("eldercare.name", body.name);
+  if (sessionStorage.getItem("eldercare.token")) sessionStorage.setItem("eldercare.name", body.name);
+  state.pendingEmployeeAvatar = null;
+  notify("个人信息已保存", "success");
+  await loadEmployeeDashboard();
+  renderSession();
   renderEmployeeDashboard();
 }
 
@@ -1426,11 +1722,12 @@ function renderEmployeeNextTask(task) {
   return `
     <article class="next-task-card">
       <div class="next-task-main">
-        <div class="task-date-block"><span>服务日期</span><strong>${formatFriendlyDate(task.appointmentDate)}</strong></div>
+        <div class="task-date-block"><span>服务日期与时间</span><strong>${formatFriendlyDate(task.appointmentDate)}</strong><small>${formatTimePeriods(task.timePeriods)}</small></div>
         <div><p class="task-service-name">${escapeHtml(task.serviceName)}</p><p class="task-client">服务对象：<strong>${escapeHtml(task.userName)}</strong></p></div>
         ${employeeTaskStatus(task.status)}
       </div>
       <div class="task-address"><span>服务地点</span><strong>${escapeHtml(task.userAddress || "预约中未填写地址")}</strong></div>
+      <div class="task-amount"><span>本次服务金额</span><strong>¥${formatMoney(task.totalAmount)}</strong></div>
       ${renderEmployeeTaskActions(task, true)}
     </article>
   `;
@@ -1458,9 +1755,10 @@ function renderAllEmployeeTasks(appointments) {
 function renderEmployeeTaskCard(task, compact = false) {
   return `
     <article class="employee-task-card ${compact ? "compact" : ""}">
-      <div class="employee-task-date"><strong>${formatFriendlyDate(task.appointmentDate)}</strong><span>${escapeHtml(task.serviceName)}</span></div>
+      <div class="employee-task-date"><strong>${formatFriendlyDate(task.appointmentDate)}</strong><span>${formatTimePeriods(task.timePeriods)}</span><small>${escapeHtml(task.serviceName)} · ¥${formatMoney(task.totalAmount)}</small></div>
       <div class="employee-task-client"><span>服务对象</span><strong>${escapeHtml(task.userName)}</strong><small>${escapeHtml(task.userAddress || "未填写地址")}</small></div>
       ${employeeTaskStatus(task.status)}
+      ${renderCancellationReason(task)}
       ${renderEmployeeTaskActions(task)}
     </article>
   `;
@@ -1468,18 +1766,29 @@ function renderEmployeeTaskCard(task, compact = false) {
 
 /**
  * 为待服务任务生成可执行操作。
- * 电话联系使用浏览器 tel: 协议，查看路线调用高德地图；已完成和已取消任务不再显示操作。
+ * 电话联系直接弹出服务对象的号码，不依赖电脑安装拨号软件；查看路线调用高德地图。
+ * 已完成和已取消任务不再显示操作。
  */
 function renderEmployeeTaskActions(task, prominent = false) {
   if (task.status !== "PENDING") return "";
   return `
     <div class="employee-task-actions ${prominent ? "prominent" : ""}">
-      ${task.userPhone ? `<a class="btn secondary" href="tel:${attr(task.userPhone)}">电话联系</a>` : ""}
+      ${task.userPhone
+        ? `<button class="btn secondary" type="button" data-action="show-phone" data-phone="${attr(task.userPhone)}" data-name="${attr(task.userName)}">电话联系</button>`
+        : `<button class="btn secondary" type="button" disabled>暂无联系电话</button>`}
       ${task.userAddress ? `<button class="btn secondary" type="button" data-action="navigate" data-address="${attr(task.userAddress)}">查看路线</button>` : ""}
       <button class="btn" type="button" data-action="employee-complete" data-id="${task.id}">确认完成服务</button>
       <button class="btn danger" type="button" data-action="employee-cancel" data-id="${task.id}">取消任务</button>
     </div>
   `;
+}
+
+/** 在电脑端直接显示联系电话，避免 tel: 协议因没有拨号软件而无法使用。 */
+function showContactPhone(phone, name) {
+  const number = String(phone || "").trim();
+  if (!number) throw new Error("该服务对象暂未提供联系电话");
+  const contactName = String(name || "服务对象").trim() || "服务对象";
+  window.alert(`${contactName}的联系电话：\n${number}`);
 }
 
 /** 把后端预约状态转换成护工端的可读状态标签。 */
@@ -1509,10 +1818,65 @@ async function employeeComplete(id) {
   renderEmployeeDashboard();
 }
 
-/** 经二次确认后取消指定任务，并重新加载任务概况。 */
-async function employeeCancel(id) {
-  if (!confirm("确定要取消这项任务吗？")) return;
-  await api(`/employees/me/appointments/${id}/cancel`, { method: "PATCH" });
+/** 打开护工取消任务表单，预设常见原因并支持填写其他原因。 */
+function openEmployeeCancelDialog(id) {
+  document.getElementById("employeeCancelDialog")?.remove();
+  document.body.insertAdjacentHTML("beforeend", `
+    <dialog id="employeeCancelDialog" class="cancel-reason-dialog" aria-labelledby="cancel-dialog-title">
+      <form data-submit="employee-cancel-reason" data-appointment-id="${attr(id)}">
+        <header>
+          <p>取消服务任务</p>
+          <h3 id="cancel-dialog-title">请选择取消原因</h3>
+          <span>提交后老人和管理员都能看到该原因。</span>
+        </header>
+        <fieldset class="cancel-reason-options">
+          <legend class="sr-only">取消原因</legend>
+          ${[
+            "临时身体不适",
+            "工作时间发生冲突",
+            "无法按时到达"
+          ].map((reason) => `<label><input type="radio" name="cancelReason" value="${reason}" required><span>${reason}<b aria-hidden="true">✓</b></span></label>`).join("")}
+          <label><input type="radio" name="cancelReason" value="OTHER" required><span>其他原因<b aria-hidden="true">✓</b></span></label>
+        </fieldset>
+        <label class="field cancel-custom-reason" data-custom-cancel-reason hidden>
+          <span>请填写其他原因</span>
+          <textarea name="customReason" maxlength="200" rows="3" placeholder="请简要说明无法继续服务的原因"></textarea>
+          <small>最多输入 200 个字</small>
+        </label>
+        <footer>
+          <button class="btn secondary" type="button" data-action="close-cancel-dialog">暂不取消</button>
+          <button class="btn danger" type="submit">确认取消预约</button>
+        </footer>
+      </form>
+    </dialog>`);
+
+  const dialog = document.getElementById("employeeCancelDialog");
+  dialog.addEventListener("close", () => dialog.remove(), { once: true });
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  dialog.showModal();
+}
+
+/** 关闭取消原因弹窗，不修改预约状态。 */
+function closeEmployeeCancelDialog() {
+  const dialog = document.getElementById("employeeCancelDialog");
+  if (dialog?.open) dialog.close();
+  else dialog?.remove();
+}
+
+/** 解析预设或自填原因，提交后重新加载护工任务。 */
+async function submitEmployeeCancellation(id, payload) {
+  const selectedReason = String(payload.cancelReason || "");
+  const reason = selectedReason === "OTHER"
+    ? String(payload.customReason || "").trim()
+    : selectedReason;
+  if (!reason) throw new Error("请选择或填写取消原因");
+  await api(`/employees/me/appointments/${id}/cancel`, {
+    method: "PATCH",
+    body: { reason }
+  });
+  closeEmployeeCancelDialog();
   notify("预约已取消", "success");
   await loadEmployeeDashboard();
   renderEmployeeDashboard();
@@ -1800,17 +2164,17 @@ function appointmentsTable(appointments, mode) {
       <table>
         <thead>
           <tr>
-            <th>日期</th><th>服务</th><th>老人</th><th>员工</th><th>状态</th><th>操作</th>
+            <th>日期与时段</th><th>服务与金额</th><th>老人</th><th>员工</th><th>状态</th><th>操作</th>
           </tr>
         </thead>
         <tbody>
           ${appointments.map((item) => `
             <tr>
-              <td>${escapeHtml(item.appointmentDate)}</td>
-              <td>${escapeHtml(item.serviceName)}</td>
+              <td>${escapeHtml(item.appointmentDate)}<br><span class="small muted">${formatTimePeriods(item.timePeriods)}</span></td>
+              <td>${escapeHtml(item.serviceName)}<br><span class="small muted">¥${formatMoney(item.totalAmount)}</span></td>
               <td>${escapeHtml(item.userName)}<br><span class="small muted">${escapeHtml(item.userPhone)} ${escapeHtml(item.userAddress)}</span></td>
               <td>${escapeHtml(item.employeeName)}<br><span class="small muted">${escapeHtml(item.employeePhone)}</span></td>
-              <td>${statusBadge(item.status)}</td>
+              <td>${statusBadge(item.status)}${renderCancellationReason(item, true)}</td>
               <td>${appointmentActions(item, mode)}</td>
             </tr>
           `).join("")}
@@ -1906,8 +2270,9 @@ async function api(path, options = {}) {
   }
 
   if (response.status === 401 && auth) {
-    logout();
-    throw new Error(payload.message || "登录已过期，请重新登录");
+    const message = payload.message || "登录已过期，请重新登录";
+    logout(message);
+    throw new Error(message);
   }
 
   if (!response.ok || payload.code !== 0) {
@@ -1966,6 +2331,29 @@ function roleName(role) {
   if (role === "EMPLOYEE") return "护工员工";
   if (role === "ADMIN") return "管理员";
   return "未登录";
+}
+
+/** 把后端金额统一显示为带两位小数和千位分隔符的人民币数字。 */
+function formatMoney(value) {
+  const amount = Number(value || 0);
+  return Number.isFinite(amount)
+    ? amount.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : "0.00";
+}
+
+/** 把后端时段代码转换为“早间 06:00-10:00”一类可读文本，并保持一天内的时间顺序。 */
+function formatTimePeriods(values) {
+  const selected = new Set(Array.isArray(values) ? values : []);
+  const labels = TIME_PERIODS
+    .filter(([value]) => selected.has(value))
+    .map(([, label, time]) => `${label} ${time}`);
+  return labels.length ? labels.join("、") : "时间待确认";
+}
+
+/** 预约金额由服务单个时段参考价乘以老人选择的时段数得到。 */
+function calculateBookingTotal(service, slotCount = state.selectedTimePeriods.length) {
+  const unitPrice = Number(service?.referencePrice || 0);
+  return Number.isFinite(unitPrice) ? unitPrice * Number(slotCount || 0) : 0;
 }
 
 /**
