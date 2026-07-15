@@ -2,6 +2,7 @@ package com.eldercare.service;
 
 import com.eldercare.common.BusinessException;
 import com.eldercare.dto.AvailabilityRequest;
+import com.eldercare.dto.EmployeeProfileRequest;
 import com.eldercare.dto.TrainingQuizRequest;
 import com.eldercare.entity.Employee;
 import com.eldercare.repository.EmployeeRepository;
@@ -26,7 +27,7 @@ public class EmployeeService {
             "q4", "B"
     );
     private static final Pattern SLOT_PATTERN =
-            Pattern.compile("^[1-5]_(MORNING|AFTERNOON|EVENING)$");
+            Pattern.compile("^[1-7]_(MORNING|NOON|AFTERNOON|EVENING)$");
 
     private final EmployeeRepository employeeRepo;
     private final EmployeeTrainingRepository trainingRepo;
@@ -93,7 +94,7 @@ public class EmployeeService {
         List<String> requested = request == null || request.getSlots() == null
                 ? List.of() : request.getSlots();
         Set<String> slots = Set.copyOf(requested);
-        if (slots.size() > 15 || slots.stream().anyMatch(slot -> !SLOT_PATTERN.matcher(slot).matches())) {
+        if (slots.size() > 28 || slots.stream().anyMatch(slot -> !SLOT_PATTERN.matcher(slot).matches())) {
             throw new BusinessException("可工作时间格式不正确");
         }
         trainingRepo.replaceAvailability(employee.getId(), List.copyOf(slots));
@@ -105,6 +106,29 @@ public class EmployeeService {
             throw new BusinessException("请先完成培训并通过答题");
         }
         employeeRepo.updateWorkingStatus(username, working);
+    }
+
+    /** 修改护工本人基本资料和老人端可见的服务介绍。 */
+    @Transactional
+    public void updateProfile(String username, EmployeeProfileRequest request) {
+        Employee employee = requireEmployee(username);
+        String avatarData = request.getAvatarData();
+        if (avatarData != null && !avatarData.isBlank()
+                && !avatarData.matches("^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=\\r\\n]+$")) {
+            throw new BusinessException("头像格式不正确，请选择 JPG、PNG 或 WebP 图片");
+        }
+
+        employeeRepo.updateProfileBasics(
+                employee.getId(), request.getName().trim(), request.getAge(), request.getPhone().trim());
+        employeeRepo.upsertProfile(
+                employee.getId(), avatarData,
+                normalizeOptional(request.getSpecialty()),
+                normalizeOptional(request.getExperience()),
+                normalizeOptional(request.getBio()));
+    }
+
+    private String normalizeOptional(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     private Employee requireEmployee(String username) {

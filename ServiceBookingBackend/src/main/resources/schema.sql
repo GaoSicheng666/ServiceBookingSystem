@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS employees (
     name VARCHAR(50) NOT NULL,
     age TINYINT UNSIGNED NOT NULL,
     phone VARCHAR(20) NOT NULL,
-    salary DECIMAL(10,2) NOT NULL,
+    salary DECIMAL(10,2) NOT NULL DEFAULT 0,          -- 兼容旧版数据，新注册固定写入 0
     is_working BOOLEAN NOT NULL DEFAULT FALSE,      -- 是否接单
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -47,7 +47,18 @@ CREATE TABLE IF NOT EXISTS employee_training (
     CONSTRAINT fk_training_employee FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 护工每周可工作时段。weekday 使用 1-5 表示星期一至星期五。
+-- 护工公开个人资料。头像保存为前端压缩后的 data URL，独立建表兼容已有员工数据。
+CREATE TABLE IF NOT EXISTS employee_profiles (
+    employee_id INT PRIMARY KEY,
+    avatar_data MEDIUMTEXT DEFAULT NULL,
+    specialty VARCHAR(100) DEFAULT NULL,
+    experience VARCHAR(200) DEFAULT NULL,
+    bio VARCHAR(500) DEFAULT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_profile_employee FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 护工每周可工作时段。weekday 使用 1-7 表示星期一至星期日。
 CREATE TABLE IF NOT EXISTS employee_availability (
     id INT PRIMARY KEY AUTO_INCREMENT,
     employee_id INT NOT NULL,
@@ -66,6 +77,15 @@ CREATE TABLE IF NOT EXISTS admins (
     name VARCHAR(50) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uk_admins_username UNIQUE (username)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 每个账号只保留一个有效登录会话。新登录会覆盖旧 session_id，使旧 JWT 立即失效。
+CREATE TABLE IF NOT EXISTS account_sessions (
+    role VARCHAR(20) NOT NULL,
+    username VARCHAR(50) NOT NULL,
+    session_id VARCHAR(64) NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (role, username)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 服务项目表(由管理员维护)
@@ -95,6 +115,33 @@ CREATE TABLE IF NOT EXISTS appointments (
     INDEX idx_appointments_user (user_id),
     INDEX idx_appointments_employee (employee_id),
     INDEX idx_appointments_emp_date (employee_id, appointment_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 预约取消记录。独立建表可兼容线上已经存在、没有取消原因字段的 appointments 表。
+CREATE TABLE IF NOT EXISTS appointment_cancellations (
+    appointment_id INT PRIMARY KEY,
+    cancelled_by VARCHAR(20) NOT NULL,              -- USER / EMPLOYEE
+    reason VARCHAR(200) NOT NULL,
+    cancelled_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_cancellation_appointment FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 一个预约可以包含当天的一个或多个服务时段。
+CREATE TABLE IF NOT EXISTS appointment_time_slots (
+    appointment_id INT NOT NULL,
+    time_period VARCHAR(20) NOT NULL,
+    PRIMARY KEY (appointment_id, time_period),
+    CONSTRAINT fk_time_slots_appointment FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE,
+    INDEX idx_time_slots_period (time_period)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 下单时固定单时段价格和总金额，避免管理员以后改价影响历史订单。
+CREATE TABLE IF NOT EXISTS appointment_billing (
+    appointment_id INT PRIMARY KEY,
+    unit_price DECIMAL(10,2) NOT NULL DEFAULT 0,
+    slot_count TINYINT UNSIGNED NOT NULL,
+    total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+    CONSTRAINT fk_billing_appointment FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ------------------------------------------------------------

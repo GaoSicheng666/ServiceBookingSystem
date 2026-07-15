@@ -29,12 +29,15 @@ public final class RowMappers {
         e.setName(rs.getString("name"));
         e.setAge(rs.getInt("age"));
         e.setPhone(rs.getString("phone"));
-        e.setSalary(rs.getBigDecimal("salary"));
         e.setWorking(rs.getBoolean("is_working"));
         e.setActive(rs.getBoolean("is_active"));
         e.setTrainingCompleted(rs.getBoolean("training_completed"));
         e.setQuizPassed(rs.getBoolean("quiz_passed"));
         e.setQuizScore(rs.getInt("quiz_score"));
+        e.setAvatarData(rs.getString("avatar_data"));
+        e.setSpecialty(rs.getString("specialty"));
+        e.setExperience(rs.getString("experience"));
+        e.setBio(rs.getString("bio"));
         return e;
     };
 

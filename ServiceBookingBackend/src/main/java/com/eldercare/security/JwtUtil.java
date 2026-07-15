@@ -10,7 +10,7 @@ import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
 
-/** JWT 生成与解析。令牌中携带 username(subject)与 role。 */
+/** JWT 生成与解析。令牌中携带 username(subject)、role 与唯一登录会话编号 sid。 */
 @Component
 public class JwtUtil {
 
@@ -24,11 +24,12 @@ public class JwtUtil {
     }
 
     /** 签发令牌。 */
-    public String generate(String username, String role) {
+    public String generate(String username, String role, String sessionId) {
         Date now = new Date();
         return Jwts.builder()
                 .subject(username)
                 .claim("role", role)
+                .claim("sid", sessionId)
                 .issuedAt(now)
                 .expiration(new Date(now.getTime() + expirationMillis))
                 .signWith(key)

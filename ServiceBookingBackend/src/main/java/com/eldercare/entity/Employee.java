@@ -1,6 +1,5 @@
 package com.eldercare.entity;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /** 员工(护工)实体,对应 employees 表。 */
@@ -11,12 +10,15 @@ public class Employee {
     private String name;
     private Integer age;
     private String phone;
-    private BigDecimal salary;
     private boolean working = false;
     private boolean active = true;
     private boolean trainingCompleted = false;
     private boolean quizPassed = false;
     private Integer quizScore = 0;
+    private String avatarData;
+    private String specialty;
+    private String experience;
+    private String bio;
     private LocalDateTime createdAt;
 
     public Integer getId() { return id; }
@@ -31,8 +33,6 @@ public class Employee {
     public void setAge(Integer age) { this.age = age; }
     public String getPhone() { return phone; }
     public void setPhone(String phone) { this.phone = phone; }
-    public BigDecimal getSalary() { return salary; }
-    public void setSalary(BigDecimal salary) { this.salary = salary; }
     public boolean isWorking() { return working; }
     public void setWorking(boolean working) { this.working = working; }
     public boolean isActive() { return active; }
@@ -43,6 +43,14 @@ public class Employee {
     public void setQuizPassed(boolean quizPassed) { this.quizPassed = quizPassed; }
     public Integer getQuizScore() { return quizScore; }
     public void setQuizScore(Integer quizScore) { this.quizScore = quizScore; }
+    public String getAvatarData() { return avatarData; }
+    public void setAvatarData(String avatarData) { this.avatarData = avatarData; }
+    public String getSpecialty() { return specialty; }
+    public void setSpecialty(String specialty) { this.specialty = specialty; }
+    public String getExperience() { return experience; }
+    public void setExperience(String experience) { this.experience = experience; }
+    public String getBio() { return bio; }
+    public void setBio(String bio) { this.bio = bio; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }

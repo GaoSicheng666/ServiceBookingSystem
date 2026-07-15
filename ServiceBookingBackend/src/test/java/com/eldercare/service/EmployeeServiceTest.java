@@ -2,6 +2,7 @@ package com.eldercare.service;
 
 import com.eldercare.common.BusinessException;
 import com.eldercare.dto.AvailabilityRequest;
+import com.eldercare.dto.EmployeeProfileRequest;
 import com.eldercare.dto.TrainingQuizRequest;
 import com.eldercare.entity.Employee;
 import com.eldercare.repository.EmployeeRepository;
@@ -76,7 +77,7 @@ class EmployeeServiceTest {
     void invalidAvailabilitySlotIsRejected() {
         employee.setQuizPassed(true);
         AvailabilityRequest request = new AvailabilityRequest();
-        request.setSlots(List.of("6_MORNING"));
+        request.setSlots(List.of("8_MORNING"));
 
         assertThrows(
                 BusinessException.class,
@@ -84,9 +85,54 @@ class EmployeeServiceTest {
         assertNull(trainingRepo.savedSlots);
     }
 
+    @Test
+    void employeeProfileIsTrimmedAndSaved() {
+        EmployeeProfileRequest request = new EmployeeProfileRequest();
+        request.setName(" 王护工 ");
+        request.setAge(38);
+        request.setPhone("13800000000");
+        request.setSpecialty(" 陪诊、日常照护 ");
+        request.setExperience(" 五年居家照护经验 ");
+        request.setBio(" 做事耐心 ");
+        request.setAvatarData("data:image/webp;base64,AAAA");
+
+        employeeService.updateProfile("worker", request);
+
+        assertEquals("王护工", employeeRepo.savedName);
+        assertEquals(38, employeeRepo.savedAge);
+        assertEquals("13800000000", employeeRepo.savedPhone);
+        assertEquals("陪诊、日常照护", employeeRepo.savedSpecialty);
+        assertEquals("五年居家照护经验", employeeRepo.savedExperience);
+        assertEquals("做事耐心", employeeRepo.savedBio);
+        assertEquals("data:image/webp;base64,AAAA", employeeRepo.savedAvatarData);
+    }
+
+    @Test
+    void invalidAvatarDataIsRejected() {
+        EmployeeProfileRequest request = new EmployeeProfileRequest();
+        request.setName("王护工");
+        request.setAge(38);
+        request.setPhone("13800000000");
+        request.setAvatarData("data:text/html;base64,PHNjcmlwdD4=");
+
+        BusinessException error = assertThrows(
+                BusinessException.class,
+                () -> employeeService.updateProfile("worker", request));
+
+        assertEquals("头像格式不正确，请选择 JPG、PNG 或 WebP 图片", error.getMessage());
+        assertNull(employeeRepo.savedName);
+    }
+
     private static class FakeEmployeeRepository extends EmployeeRepository {
         private final Employee employee;
         private boolean statusUpdated;
+        private String savedName;
+        private Integer savedAge;
+        private String savedPhone;
+        private String savedAvatarData;
+        private String savedSpecialty;
+        private String savedExperience;
+        private String savedBio;
 
         FakeEmployeeRepository(Employee employee) {
             super(null);
@@ -101,6 +147,22 @@ class EmployeeServiceTest {
         @Override
         public void updateWorkingStatus(String username, boolean working) {
             statusUpdated = true;
+        }
+
+        @Override
+        public void updateProfileBasics(int employeeId, String name, int age, String phone) {
+            savedName = name;
+            savedAge = age;
+            savedPhone = phone;
+        }
+
+        @Override
+        public void upsertProfile(int employeeId, String avatarData, String specialty,
+                                  String experience, String bio) {
+            savedAvatarData = avatarData;
+            savedSpecialty = specialty;
+            savedExperience = experience;
+            savedBio = bio;
         }
     }
 

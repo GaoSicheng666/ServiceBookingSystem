@@ -15,11 +15,16 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.math.BigDecimal;
+import java.util.LinkedHashSet;
 import java.util.List;
 
 /** 预约业务:下单(事务+行锁防并发)、查询、取消、完成。 */
 @Service
 public class BookingService {
+
+    private static final List<String> TIME_PERIOD_ORDER =
+            List.of("MORNING", "NOON", "AFTERNOON", "EVENING");
 
     private final UserRepository userRepo;
     private final EmployeeRepository employeeRepo;
@@ -39,21 +44,27 @@ public class BookingService {
         return serviceRepo.findActive();
     }
 
-    /** 指定日期可预约的员工。 */
-    public List<Employee> availableEmployees(LocalDate date) {
+    /** 查询在指定日期和全部所选时段均可预约的员工。 */
+    public List<Employee> availableEmployees(LocalDate date, List<String> timePeriods) {
         if (date == null) {
             date = LocalDate.now();
         }
-        return employeeRepo.findAvailable(date);
+        if (date.isBefore(LocalDate.now())) {
+            throw new BusinessException(2005, "不能查询过去日期的可预约员工");
+        }
+        List<String> normalizedPeriods = normalizeTimePeriods(timePeriods);
+        return employeeRepo.findAvailable(
+                date, date.getDayOfWeek().getValue(), normalizedPeriods);
     }
 
     /**
      * 下预约单。整个方法在一个事务里,用 FOR UPDATE 行锁防止并发重复预约:
-     * - 同一员工同一天只能被预约一次(未取消的)
-     * - 同一用户同一天只能下一单(未取消的)
+     * - 同一员工同一天的同一时段只能被预约一次(未取消的)
+     * - 同一用户同一天的同一时段只能下一单(未取消的)
      */
     @Transactional
     public void book(String username, BookingRequest req) {
+        List<String> timePeriods = normalizeTimePeriods(req.getTimePeriods());
         User user = userRepo.findByUsername(username)
                 .orElseThrow(() -> new BusinessException("用户不存在"));
 
@@ -79,15 +90,49 @@ public class BookingService {
             throw new BusinessException(2005, "不能预约过去的日期");
         }
 
-        // 行锁 + 冲突校验
-        if (appointmentRepo.existsActiveForUserOnDate(user.getId(), date)) {
-            throw new BusinessException(2006, "您在该日期已有预约,请先取消");
-        }
-        if (appointmentRepo.existsActiveForEmployeeOnDate(emp.getId(), date)) {
-            throw new BusinessException(2001, "该员工在所选日期已被预约");
+        int weekday = date.getDayOfWeek().getValue();
+        if (!employeeRepo.hasAvailability(emp.getId(), weekday, timePeriods)) {
+            throw new BusinessException(2003, "该员工在所选日期和时段不可预约");
         }
 
-        appointmentRepo.insert(user.getId(), emp.getId(), service.getId(), date);
+        // 固定顺序锁住老人和护工后再检查时段，防止并发请求同时通过冲突校验。
+        appointmentRepo.lockBookingOwners(user.getId(), emp.getId());
+        if (appointmentRepo.existsActiveForUserSlots(user.getId(), date, timePeriods)) {
+            throw new BusinessException(2006, "您在所选日期和时段已有预约");
+        }
+        if (appointmentRepo.existsActiveForEmployeeSlots(emp.getId(), date, timePeriods)) {
+            throw new BusinessException(2001, "该员工在所选日期和时段已被预约");
+        }
+
+        int appointmentId = appointmentRepo.insert(
+                user.getId(), emp.getId(), service.getId(), date);
+        appointmentRepo.insertTimeSlots(appointmentId, timePeriods);
+
+        BigDecimal unitPrice = service.getReferencePrice() == null
+                ? BigDecimal.ZERO : service.getReferencePrice();
+        BigDecimal totalAmount = unitPrice.multiply(BigDecimal.valueOf(timePeriods.size()));
+        appointmentRepo.insertBilling(
+                appointmentId, unitPrice, timePeriods.size(), totalAmount);
+    }
+
+    /** 去重、校验并按一天内的先后顺序排列前端提交的时段。 */
+    private List<String> normalizeTimePeriods(List<String> timePeriods) {
+        if (timePeriods == null || timePeriods.isEmpty()) {
+            throw new BusinessException(2005, "请至少选择一个服务时段");
+        }
+
+        LinkedHashSet<String> unique = new LinkedHashSet<>();
+        for (String period : timePeriods) {
+            String normalized = period == null ? "" : period.trim().toUpperCase();
+            if (!TIME_PERIOD_ORDER.contains(normalized)) {
+                throw new BusinessException(2005, "存在无效的服务时段");
+            }
+            unique.add(normalized);
+        }
+
+        return TIME_PERIOD_ORDER.stream()
+                .filter(unique::contains)
+                .toList();
     }
 
     /** 用户查看自己的预约与历史。 */
@@ -104,6 +149,13 @@ public class BookingService {
         return appointmentRepo.findByEmployeeId(emp.getId(), status);
     }
 
+    /** 护工累计服务收入，只统计已经完成的预约。 */
+    public BigDecimal completedEarningsAsEmployee(String username) {
+        Employee employee = employeeRepo.findByUsername(username)
+                .orElseThrow(() -> new BusinessException("员工不存在"));
+        return appointmentRepo.sumCompletedEarnings(employee.getId());
+    }
+
     /** 用户取消预约(仅能取消自己的、且尚未完成的)。 */
     @Transactional
     public void cancelByUser(String username, int appointmentId) {
@@ -117,11 +169,12 @@ public class BookingService {
             throw new BusinessException(2008, "该预约当前状态不可取消");
         }
         appointmentRepo.updateStatus(appointmentId, "CANCELLED");
+        appointmentRepo.recordCancellation(appointmentId, "USER", "老人主动取消");
     }
 
     /** 员工取消分配给自己的预约。 */
     @Transactional
-    public void cancelByEmployee(String username, int appointmentId) {
+    public void cancelByEmployee(String username, int appointmentId, String reason) {
         Employee emp = employeeRepo.findByUsername(username)
                 .orElseThrow(() -> new BusinessException("员工不存在"));
         Appointment a = appointmentRepo.findById(appointmentId);
@@ -131,7 +184,15 @@ public class BookingService {
         if (!"PENDING".equals(a.getStatus())) {
             throw new BusinessException(2008, "该预约当前状态不可取消");
         }
+        String normalizedReason = reason == null ? "" : reason.trim();
+        if (normalizedReason.isEmpty()) {
+            throw new BusinessException(2008, "请选择或填写取消原因");
+        }
+        if (normalizedReason.length() > 200) {
+            throw new BusinessException(2008, "取消原因不能超过200个字");
+        }
         appointmentRepo.updateStatus(appointmentId, "CANCELLED");
+        appointmentRepo.recordCancellation(appointmentId, "EMPLOYEE", normalizedReason);
     }
 
     /** 员工标记预约为已完成。 */

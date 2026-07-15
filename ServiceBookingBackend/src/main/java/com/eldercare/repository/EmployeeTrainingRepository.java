@@ -45,7 +45,7 @@ public class EmployeeTrainingRepository {
         return jdbc.query(
                 "SELECT weekday, time_period FROM employee_availability " +
                         "WHERE employee_id = ? ORDER BY weekday, " +
-                        "FIELD(time_period, 'MORNING', 'AFTERNOON', 'EVENING')",
+                        "FIELD(time_period, 'MORNING', 'NOON', 'AFTERNOON', 'EVENING')",
                 (rs, rowNum) -> rs.getInt("weekday") + "_" + rs.getString("time_period"),
                 employeeId);
     }

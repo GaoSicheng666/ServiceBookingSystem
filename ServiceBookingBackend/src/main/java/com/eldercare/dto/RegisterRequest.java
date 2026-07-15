@@ -1,9 +1,8 @@
 package com.eldercare.dto;
 
 import jakarta.validation.constraints.*;
-import java.math.BigDecimal;
 
-/** 注册请求。role 为 USER 或 EMPLOYEE。用户需 address,员工需 salary。 */
+/** 注册请求。role 为 USER 或 EMPLOYEE，老人用户需要填写 address。 */
 public class RegisterRequest {
 
     @NotBlank(message = "角色不能为空")
@@ -32,9 +31,6 @@ public class RegisterRequest {
     // 用户特有
     private String address;
 
-    // 员工特有
-    private BigDecimal salary;
-
     public String getRole() { return role; }
     public void setRole(String role) { this.role = role; }
     public String getUsername() { return username; }
@@ -49,6 +45,4 @@ public class RegisterRequest {
     public void setAge(Integer age) { this.age = age; }
     public String getAddress() { return address; }
     public void setAddress(String address) { this.address = address; }
-    public BigDecimal getSalary() { return salary; }
-    public void setSalary(BigDecimal salary) { this.salary = salary; }
 }

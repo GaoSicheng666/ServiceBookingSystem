@@ -1,6 +1,7 @@
 package com.eldercare.security;
 
 import com.eldercare.common.ApiResponse;
+import com.eldercare.repository.LoginSessionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.Claims;
 import jakarta.servlet.http.HttpServletRequest;
@@ -18,10 +19,12 @@ import org.springframework.web.servlet.HandlerInterceptor;
 public class AuthInterceptor implements HandlerInterceptor {
 
     private final JwtUtil jwtUtil;
+    private final LoginSessionRepository sessionRepo;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public AuthInterceptor(JwtUtil jwtUtil) {
+    public AuthInterceptor(JwtUtil jwtUtil, LoginSessionRepository sessionRepo) {
         this.jwtUtil = jwtUtil;
+        this.sessionRepo = sessionRepo;
     }
 
     @Override
@@ -39,12 +42,18 @@ public class AuthInterceptor implements HandlerInterceptor {
         String token = header.substring(7);
         String username;
         String role;
+        String sessionId;
         try {
             Claims claims = jwtUtil.parse(token);
             username = claims.getSubject();
             role = claims.get("role", String.class);
+            sessionId = claims.get("sid", String.class);
         } catch (Exception e) {
             return reject(response, 401, "登录已过期或令牌无效,请重新登录");
+        }
+
+        if (sessionId == null || !sessionRepo.isCurrent(username, role, sessionId)) {
+            return reject(response, 401, "该账号已在其他设备登录，请重新登录");
         }
 
         // 管理后台接口:仅 ADMIN 可访问

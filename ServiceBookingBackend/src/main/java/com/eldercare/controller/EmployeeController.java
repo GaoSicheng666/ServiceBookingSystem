@@ -4,14 +4,18 @@ import com.eldercare.common.ApiResponse;
 import com.eldercare.entity.Appointment;
 import com.eldercare.entity.Employee;
 import com.eldercare.dto.AvailabilityRequest;
+import com.eldercare.dto.CancelAppointmentRequest;
+import com.eldercare.dto.EmployeeProfileRequest;
 import com.eldercare.dto.TrainingQuizRequest;
 import com.eldercare.service.BookingService;
 import com.eldercare.service.EmployeeService;
 import com.eldercare.security.CurrentUser;
 import org.springframework.web.bind.annotation.*;
+import jakarta.validation.Valid;
 
 import java.util.List;
 import java.util.Map;
+import java.math.BigDecimal;
 
 /** 员工(护工)侧接口。 */
 @RestController
@@ -32,6 +36,13 @@ public class EmployeeController {
         return ApiResponse.ok(employeeService.getSelf(CurrentUser.username()));
     }
 
+    /** 修改当前护工的头像、联系方式和公开服务介绍。 */
+    @PutMapping("/me/profile")
+    public ApiResponse<Void> updateProfile(@Valid @RequestBody EmployeeProfileRequest request) {
+        employeeService.updateProfile(CurrentUser.username(), request);
+        return ApiResponse.ok();
+    }
+
     /** 护工确认已阅读培训内容，随后可以进入答题。 */
     @PatchMapping("/me/training/complete")
     public ApiResponse<Void> completeTraining() {
@@ -45,13 +56,13 @@ public class EmployeeController {
         return ApiResponse.ok(employeeService.submitQuiz(CurrentUser.username(), request));
     }
 
-    /** 查询护工星期一至星期五的可工作时段。 */
+    /** 查询护工星期一至星期日的可工作时段。 */
     @GetMapping("/me/availability")
     public ApiResponse<List<String>> availability() {
         return ApiResponse.ok(employeeService.getAvailability(CurrentUser.username()));
     }
 
-    /** 整体保存护工星期一至星期五的可工作时段。 */
+    /** 整体保存护工星期一至星期日的可工作时段。 */
     @PutMapping("/me/availability")
     public ApiResponse<Void> updateAvailability(@RequestBody AvailabilityRequest request) {
         employeeService.updateAvailability(CurrentUser.username(), request);
@@ -75,6 +86,12 @@ public class EmployeeController {
         return ApiResponse.ok(bookingService.myAppointmentsAsEmployee(CurrentUser.username(), status));
     }
 
+    /** 按已完成服务参考价统计当前护工累计收入。 */
+    @GetMapping("/me/earnings")
+    public ApiResponse<BigDecimal> earnings() {
+        return ApiResponse.ok(bookingService.completedEarningsAsEmployee(CurrentUser.username()));
+    }
+
     /** 员工标记预约完成。 */
     @PatchMapping("/me/appointments/{id}/complete")
     public ApiResponse<Void> complete(@PathVariable int id) {
@@ -84,8 +101,9 @@ public class EmployeeController {
 
     /** 员工取消分配给自己的预约。 */
     @PatchMapping("/me/appointments/{id}/cancel")
-    public ApiResponse<Void> cancel(@PathVariable int id) {
-        bookingService.cancelByEmployee(CurrentUser.username(), id);
+    public ApiResponse<Void> cancel(@PathVariable int id,
+                                    @Valid @RequestBody CancelAppointmentRequest request) {
+        bookingService.cancelByEmployee(CurrentUser.username(), id, request.getReason());
         return ApiResponse.ok();
     }
 }

@@ -2,6 +2,8 @@ package com.eldercare.entity;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * 预约单实体,对应 appointments 表。
@@ -23,6 +25,10 @@ public class Appointment {
     private String employeeName;
     private String employeePhone;
     private String serviceName;
+    private List<String> timePeriods = List.of();
+    private BigDecimal totalAmount = BigDecimal.ZERO;
+    private String cancelledBy;
+    private String cancellationReason;
 
     public Integer getId() { return id; }
     public void setId(Integer id) { this.id = id; }
@@ -50,4 +56,12 @@ public class Appointment {
     public void setEmployeePhone(String employeePhone) { this.employeePhone = employeePhone; }
     public String getServiceName() { return serviceName; }
     public void setServiceName(String serviceName) { this.serviceName = serviceName; }
+    public List<String> getTimePeriods() { return timePeriods; }
+    public void setTimePeriods(List<String> timePeriods) { this.timePeriods = timePeriods; }
+    public BigDecimal getTotalAmount() { return totalAmount; }
+    public void setTotalAmount(BigDecimal totalAmount) { this.totalAmount = totalAmount; }
+    public String getCancelledBy() { return cancelledBy; }
+    public void setCancelledBy(String cancelledBy) { this.cancelledBy = cancelledBy; }
+    public String getCancellationReason() { return cancellationReason; }
+    public void setCancellationReason(String cancellationReason) { this.cancellationReason = cancellationReason; }
 }

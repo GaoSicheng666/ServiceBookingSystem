@@ -34,11 +34,13 @@ public class UserController {
         return ApiResponse.ok(userService.getSelf(CurrentUser.username()));
     }
 
-    /** 指定日期可预约的员工。 */
+    /** 指定日期及一个或多个时段均可预约的员工。 */
     @GetMapping("/employees/available")
     public ApiResponse<List<Employee>> availableEmployees(
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        List<Employee> list = bookingService.availableEmployees(date);
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @RequestParam(name = "timePeriod", required = false) List<String> timePeriods) {
+        List<Employee> list = bookingService.availableEmployees(date, timePeriods);
         list.forEach(e -> e.setPassword(null));
         return ApiResponse.ok(list);
     }
