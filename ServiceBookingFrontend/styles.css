@@ -1141,6 +1141,56 @@ tr:last-child td {
   flex-wrap: wrap;
 }
 
+.appointments-title-block {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.appointments-refresh {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+}
+
+.appointments-refresh-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--muted);
+}
+
+.appointments-refresh-status strong,
+.appointments-refresh-status small {
+  display: block;
+}
+
+.appointments-refresh-status strong {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.appointments-refresh-status small {
+  margin-top: 2px;
+  font-size: 13px;
+}
+
+.refresh-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 0 4px rgba(43, 127, 79, 0.12);
+  flex: 0 0 auto;
+}
+
+.appointments-refresh .btn {
+  min-height: 44px;
+  padding: 8px 14px;
+  font-size: 15px;
+}
+
 .booking-toolbar > span {
   color: var(--primary);
   font-size: 18px;
@@ -1162,11 +1212,11 @@ tr:last-child td {
   color: var(--primary-dark);
 }
 
-/* 四步预约进度条：已到达的步骤由 active 类名高亮。 */
+/* 五步预约进度条：已到达的步骤由 active 类名高亮。 */
 .booking-progress {
   margin-bottom: 30px;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -1384,7 +1434,8 @@ tr:last-child td {
 }
 
 .booking-time-choice strong,
-.booking-time-choice span {
+.booking-time-choice span,
+.booking-time-choice small {
   display: block;
 }
 
@@ -1397,6 +1448,13 @@ tr:last-child td {
 .booking-time-choice span {
   color: var(--muted);
   font-size: 15px;
+}
+
+.booking-time-choice small {
+  margin-top: 8px;
+  color: var(--success);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .booking-time-choice b {
@@ -1419,7 +1477,8 @@ tr:last-child td {
 }
 
 .booking-time-choice.selected strong,
-.booking-time-choice.selected span {
+.booking-time-choice.selected span,
+.booking-time-choice.selected small {
   color: #fff;
 }
 
@@ -1431,7 +1490,22 @@ tr:last-child td {
 
 .booking-time-choice:disabled {
   cursor: not-allowed;
-  opacity: 0.55;
+}
+
+.booking-time-choice.unavailable {
+  border-color: #e0e4e0;
+  background: #f1f3f1;
+  color: #8b948f;
+}
+
+.booking-time-choice.unavailable strong,
+.booking-time-choice.unavailable span,
+.booking-time-choice.unavailable small {
+  color: #8b948f;
+}
+
+.booking-time-choice.unavailable b {
+  display: none;
 }
 
 .booking-time-summary {
@@ -1492,6 +1566,45 @@ tr:last-child td {
   min-height: 64px;
   padding: 15px 30px;
   font-size: 19px;
+}
+
+.selected-staff-time-context {
+  min-height: 88px;
+  padding: 16px 18px;
+  border: 2px solid #d3dbd5;
+  border-radius: 8px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.selected-staff-time-context > span:last-child,
+.selected-staff-time-context small,
+.selected-staff-time-context strong,
+.selected-staff-time-context em {
+  display: block;
+}
+
+.selected-staff-time-context small {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.selected-staff-time-context strong {
+  margin: 3px 0;
+  font-size: 21px;
+}
+
+.selected-staff-time-context em {
+  color: var(--primary);
+  font-size: 15px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.employee-time-section {
+  margin-top: 18px;
 }
 
 .staff-choice-list {
@@ -1742,10 +1855,79 @@ tr:last-child td {
   font-weight: 700;
 }
 
+.appointments-result-meta {
+  margin: -4px 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.appointments-result-meta strong {
+  color: var(--primary);
+  font-weight: 700;
+}
+
 /* 老人预约记录使用纵向卡片，不采用信息密集的后台表格。 */
 .appointment-card-list {
   display: grid;
   gap: 16px;
+}
+
+.appointments-pagination {
+  margin-top: 24px;
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto minmax(120px, 1fr);
+  align-items: center;
+  gap: 14px;
+}
+
+.appointments-pagination button {
+  min-height: 50px;
+  padding: 10px 18px;
+  border: 2px solid #cbd7cf;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--primary);
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.appointments-pagination button:first-child {
+  justify-self: start;
+}
+
+.appointments-pagination button:last-child {
+  justify-self: end;
+}
+
+.appointments-pagination button:hover:not(:disabled),
+.appointments-pagination button:focus-visible:not(:disabled) {
+  border-color: var(--primary);
+  background: #edf3ef;
+}
+
+.appointments-pagination button:disabled {
+  border-color: #e0e5e1;
+  background: #f4f6f4;
+  color: #9aa39e;
+  cursor: not-allowed;
+}
+
+.appointments-pagination > span {
+  min-width: 150px;
+  color: var(--muted);
+  font-size: 16px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.appointments-pagination > span strong {
+  color: var(--primary);
+  font-size: 19px;
 }
 
 .senior-appointment-card {
@@ -1884,6 +2066,14 @@ tr:last-child td {
 .employee-workbench {
   width: min(1160px, 100%);
   margin: 0 auto;
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  align-items: start;
+  gap: 24px;
+}
+
+.employee-view-content {
+  min-width: 0;
 }
 
 .employee-overview {
@@ -2014,13 +2204,16 @@ tr:last-child td {
 }
 
 .employee-view-tabs {
-  margin: 22px 0;
+  margin: 0;
   padding: 4px;
   border-radius: 8px;
   background: #e8eeea;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 4px;
+  position: sticky;
+  top: 110px;
+  align-self: start;
 }
 
 .employee-profile-reminder {
@@ -2048,7 +2241,7 @@ tr:last-child td {
 }
 
 .employee-profile-page {
-  margin-top: 24px;
+  margin-top: 0;
 }
 
 .profile-heading > span {
@@ -2151,6 +2344,15 @@ tr:last-child td {
   font-size: 14px;
 }
 
+.employee-profile-form.has-unsaved-changes {
+  border-color: #d18a72;
+}
+
+.employee-profile-form.has-unsaved-changes .profile-save-bar span {
+  color: var(--danger);
+  font-weight: 700;
+}
+
 .profile-save-bar .btn {
   min-width: 180px;
   min-height: 48px;
@@ -2165,6 +2367,11 @@ tr:last-child td {
   color: #52615a;
   font-size: 16px;
   cursor: pointer;
+}
+
+.employee-view-tabs button {
+  padding: 12px 14px;
+  text-align: left;
 }
 
 .employee-view-tabs button.active,
@@ -2723,6 +2930,26 @@ tr:last-child td {
   box-shadow: 0 10px 28px rgba(37, 48, 44, 0.06);
 }
 
+.availability-bulk-actions {
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.availability-bulk-actions > span {
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.availability-bulk-actions .btn {
+  min-height: 40px;
+  padding: 7px 13px;
+}
+
 .availability-note {
   color: var(--muted);
   font-size: 14px;
@@ -3119,6 +3346,47 @@ tr:last-child td {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .appointments-heading,
+  .appointments-title-block,
+  .appointments-refresh {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .appointments-heading,
+  .appointments-title-block {
+    gap: 6px;
+  }
+
+  .appointments-refresh {
+    gap: 12px;
+  }
+
+  .appointments-refresh .btn {
+    width: 100%;
+    min-height: 48px;
+  }
+
+  .appointments-result-meta {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .appointments-pagination {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .appointments-pagination > span {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  .appointments-pagination button {
+    width: 100%;
+    min-width: 0;
+  }
+
   .appointment-card-top {
     align-items: stretch;
     flex-direction: column;
@@ -3167,10 +3435,21 @@ tr:last-child td {
     padding: 12px;
   }
 
+  .employee-workbench {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
+  .employee-view-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    position: static;
+  }
+
   .employee-view-tabs button {
     padding-left: 6px;
     padding-right: 6px;
     font-size: 14px;
+    text-align: center;
   }
 
   .employee-profile-reminder,
@@ -3278,6 +3557,15 @@ tr:last-child td {
 
   .employee-availability form {
     overflow-x: auto;
+  }
+
+  .availability-bulk-actions {
+    min-width: 980px;
+    justify-content: flex-start;
+  }
+
+  .availability-bulk-actions > span {
+    margin-right: 0;
   }
 
   .availability-grid {

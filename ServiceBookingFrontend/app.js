@@ -11,6 +11,12 @@ const TIME_PERIODS = [
   ["EVENING", "晚上", "18:00-22:00"]
 ];
 
+// “我的预约”每页固定展示 5 条，并在页面停留期间每 15 秒读取一次最新记录。
+const USER_APPOINTMENTS_PAGE_SIZE = 5;
+const USER_APPOINTMENTS_REFRESH_INTERVAL = 15000;
+let userAppointmentsRefreshTimer = null;
+let userAppointmentsRefreshing = false;
+
 /*
  * 全局状态对象，是这个单页应用的数据中心。
  * token、role、name 根据“记住密码”选择从 localStorage 或 sessionStorage 恢复；
@@ -26,8 +32,11 @@ const state = {
   authMode: "login",
   activeAdminTab: "services",
   appointmentsFilter: "",
+  userAppointmentsPage: 1,
+  userAppointmentsLastUpdated: "",
   userView: "home",
-  employeeView: "today",
+  employeeView: "tasks",
+  employeeProfileDirty: false,
   bookingStep: 1,
   selectedDate: today(),
   selectedTimePeriods: [],
@@ -109,10 +118,16 @@ document.addEventListener("click", async (event) => {
       return;
     }
     if (action === "logout") {
+      if (!confirmDiscardEmployeeProfile()) return;
       logout();
       return;
     }
     if (action === "refresh") {
+      if (!confirmDiscardEmployeeProfile()) return;
+      if (state.role === "EMPLOYEE" && state.employeeView === "profile") {
+        state.employeeProfileDirty = false;
+        state.pendingEmployeeAvatar = null;
+      }
       await refreshDashboard();
       return;
     }
@@ -157,7 +172,11 @@ document.addEventListener("click", async (event) => {
       return;
     }
     if (action === "confirm-employee") {
-      confirmBookingEmployee();
+      await confirmBookingEmployee();
+      return;
+    }
+    if (action === "confirm-booking-time") {
+      confirmBookingTime();
       return;
     }
     if (action === "confirm-booking") {
@@ -170,6 +189,14 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "user-appointment-filter") {
       await filterUserAppointments(button.dataset.status || "");
+      return;
+    }
+    if (action === "user-appointments-page") {
+      changeUserAppointmentsPage(Number(button.dataset.page));
+      return;
+    }
+    if (action === "refresh-user-appointments") {
+      await refreshUserAppointments(true);
       return;
     }
     if (action === "cancel-user") {
@@ -190,6 +217,14 @@ document.addEventListener("click", async (event) => {
     }
     if (action === "remove-employee-avatar") {
       removeEmployeeAvatarPreview();
+      return;
+    }
+    if (action === "select-all-availability") {
+      setAllEmployeeAvailability(button, true);
+      return;
+    }
+    if (action === "clear-all-availability") {
+      setAllEmployeeAvailability(button, false);
       return;
     }
     if (action === "employee-task-filter") {
@@ -270,11 +305,13 @@ document.addEventListener("change", async (event) => {
     }
   }
   if (target.id === "employeeWorkingToggle") {
+    const requestedStatus = target.checked;
     target.disabled = true;
     try {
-      await updateEmployeeStatus(target.checked);
+      const updated = await updateEmployeeStatus(requestedStatus);
+      if (!updated) target.checked = !requestedStatus;
     } catch (error) {
-      target.checked = !target.checked;
+      target.checked = !requestedStatus;
       notify(error.message, "error");
     } finally {
       target.disabled = false;
@@ -286,8 +323,7 @@ document.addEventListener("change", async (event) => {
   }
   if (target.matches('form[data-submit="employee-schedule"] input[name="slot"]')) {
     const scheduleForm = target.closest("form");
-    const counter = scheduleForm.querySelector("[data-availability-count]");
-    if (counter) counter.textContent = scheduleForm.querySelectorAll('input[name="slot"]:checked').length;
+    updateEmployeeAvailabilityCounter(scheduleForm);
   }
   if (target.matches('form[data-submit="employee-cancel-reason"] input[name="cancelReason"]')) {
     const customField = target.form.querySelector("[data-custom-cancel-reason]");
@@ -307,6 +343,7 @@ document.addEventListener("change", async (event) => {
       state.selectedTimePeriods = [];
       state.selectedEmployeeId = "";
       state.data.availableEmployees = [];
+      state.data.selectedEmployeeAvailablePeriods = [];
     }
     state.selectedDate = target.value;
     renderUserDashboard();
@@ -334,6 +371,9 @@ document.addEventListener("focusin", (event) => {
 });
 
 document.addEventListener("input", (event) => {
+  if (event.target.closest('form[data-submit="employee-profile"]')) {
+    markEmployeeProfileDirty();
+  }
   if (event.target.matches("[data-register-rule]")) {
     updateRegisterHint(event.target, true);
     // 原密码改变后立即重新检查确认密码，避免旧的绿色对号继续表示两次密码一致。
@@ -345,6 +385,13 @@ document.addEventListener("input", (event) => {
       }
     }
   }
+});
+
+// 浏览器关闭或刷新时使用原生离开确认，避免护工误丢失尚未保存的个人资料。
+window.addEventListener("beforeunload", (event) => {
+  if (!state.employeeProfileDirty) return;
+  event.preventDefault();
+  event.returnValue = "";
 });
 
 // 中文输入法选词期间会临时产生拼音字符，此时保持“输入尚未完成”，避免提前显示绿色对号。
@@ -752,13 +799,17 @@ async function register(body) {
  * 这里只清理当前浏览器中的 JWT，不会删除后端账号、业务数据或浏览器密码管理器中的信息。
  */
 function logout(message = "已退出登录") {
+  stopUserAppointmentsAutoRefresh();
   state.token = "";
   state.role = "";
   state.name = "";
   state.data = {};
   state.appointmentsFilter = "";
+  state.userAppointmentsPage = 1;
+  state.userAppointmentsLastUpdated = "";
   state.userView = "home";
-  state.employeeView = "today";
+  state.employeeView = "tasks";
+  state.employeeProfileDirty = false;
   state.pendingEmployeeAvatar = null;
   state.bookingStep = 1;
   state.selectedDate = "";
@@ -799,7 +850,7 @@ async function refreshDashboard() {
 }
 
 /* ==================== 老人用户端 ====================
- * 老人端只展示完成预约所必需的信息，并把预约拆成“服务、日期时段、人员、确认”四步。
+ * 老人端只展示完成预约所必需的信息，并把预约拆成“服务、日期、人员、时段、确认”五步。
  */
 
 /** 同时加载老人资料、可预约服务和本人的预约记录，并写入 state.data。 */
@@ -812,24 +863,74 @@ async function loadUserDashboard() {
   state.data.user = me;
   state.data.services = services;
   state.data.userAppointments = appointments;
+  if (state.userView === "appointments") {
+    state.userAppointmentsLastUpdated = formatRefreshTime();
+  }
 }
 
 /**
- * 根据已选日期和全部所选时段查询可预约的护工。
+ * 只刷新老人本人的预约记录，避免 15 秒定时任务反复读取个人资料和服务项目。
+ * 手动刷新失败时把错误交给统一提示处理；自动刷新失败则保留当前列表，等待下次重试。
+ */
+async function refreshUserAppointments(showMessage = false) {
+  if (userAppointmentsRefreshing || !state.token || state.role !== "USER" || state.userView !== "appointments") return;
+  userAppointmentsRefreshing = true;
+  try {
+    state.data.userAppointments = await api(`/appointments/me${statusQuery()}`);
+    state.userAppointmentsLastUpdated = formatRefreshTime();
+    renderUserDashboard();
+    if (showMessage) notify("预约记录已刷新", "success");
+  } catch (error) {
+    if (showMessage) throw error;
+  } finally {
+    userAppointmentsRefreshing = false;
+  }
+}
+
+/** 进入“我的预约”后启动唯一的自动刷新定时器。 */
+function startUserAppointmentsAutoRefresh() {
+  if (userAppointmentsRefreshTimer || !state.token || state.role !== "USER" || state.userView !== "appointments") return;
+  userAppointmentsRefreshTimer = window.setInterval(() => {
+    if (document.hidden) return;
+    if (!state.token || state.role !== "USER" || state.userView !== "appointments") {
+      stopUserAppointmentsAutoRefresh();
+      return;
+    }
+    refreshUserAppointments(false);
+  }, USER_APPOINTMENTS_REFRESH_INTERVAL);
+}
+
+/** 离开预约记录页或退出登录时释放定时器。 */
+function stopUserAppointmentsAutoRefresh() {
+  if (!userAppointmentsRefreshTimer) return;
+  window.clearInterval(userAppointmentsRefreshTimer);
+  userAppointmentsRefreshTimer = null;
+}
+
+/**
+ * 根据已选日期查询当天至少还有一个空闲时段的护工。
  * @param {boolean} showMessage 是否在查询完成后显示成功提示。
  */
 async function loadAvailableEmployees(showMessage = true) {
   const date = state.selectedDate || today();
   const params = new URLSearchParams({ date });
-  state.selectedTimePeriods.forEach((period) => params.append("timePeriod", period));
   const employees = await api(`/employees/available?${params.toString()}`);
   state.data.availableEmployees = employees;
-  if (showMessage) notify("服务人员已更新", "success");
+  if (showMessage) notify("当天可预约的服务人员已更新", "success");
+}
+
+/** 选定护工后读取其在指定日期仍可预约的具体时段。 */
+async function loadSelectedEmployeeAvailablePeriods() {
+  if (!state.selectedEmployeeId) throw new Error("请先选择服务人员");
+  if (!state.selectedDate) throw new Error("请先选择服务日期");
+  const params = new URLSearchParams({ date: state.selectedDate });
+  const periods = await api(`/employees/${Number(state.selectedEmployeeId)}/available-time-periods?${params.toString()}`);
+  state.data.selectedEmployeeAvailablePeriods = Array.isArray(periods) ? periods : [];
 }
 
 /**
  * 老人端总渲染入口。
- * 根据 userView 在服务首页、四步预约和预约记录之间切换，不会同时堆叠多个流程。
+ * 根据 userView 在服务首页、五步预约和预约记录之间切换，不会同时堆叠多个流程。
  */
 function renderUserDashboard() {
   const user = state.data.user || {};
@@ -840,12 +941,15 @@ function renderUserDashboard() {
   el.viewTitle.textContent = `您好，${user.name || state.name || "欢迎使用"}`;
   el.viewActions.innerHTML = "";
 
+  if (state.userView !== "appointments") stopUserAppointmentsAutoRefresh();
+
   if (state.userView === "booking") {
     el.content.innerHTML = renderBookingWizard(services, employees);
     return;
   }
   if (state.userView === "appointments") {
     el.content.innerHTML = renderUserAppointments(appointments);
+    startUserAppointmentsAutoRefresh();
     return;
   }
 
@@ -881,6 +985,7 @@ function startBooking() {
   state.selectedTimePeriods = [];
   state.selectedEmployeeId = "";
   state.data.availableEmployees = [];
+  state.data.selectedEmployeeAvailablePeriods = [];
   renderUserDashboard();
 }
 
@@ -888,6 +993,7 @@ function startBooking() {
 async function showUserHome() {
   state.userView = "home";
   state.appointmentsFilter = "";
+  state.userAppointmentsPage = 1;
   await loadUserDashboard();
   renderSession();
   renderUserDashboard();
@@ -897,6 +1003,7 @@ async function showUserHome() {
 async function showUserAppointments() {
   state.userView = "appointments";
   state.appointmentsFilter = "";
+  state.userAppointmentsPage = 1;
   await loadUserDashboard();
   renderUserDashboard();
 }
@@ -907,37 +1014,44 @@ async function showUserAppointments() {
  */
 async function filterUserAppointments(status) {
   state.appointmentsFilter = status;
+  state.userAppointmentsPage = 1;
   await loadUserDashboard();
   renderUserDashboard();
 }
 
-/** 保存选中的服务项目并进入日期、时段选择步骤。 */
+/** 保存选中的服务项目并进入日期选择步骤。 */
 function selectBookingService(serviceId) {
   state.selectedServiceId = serviceId;
   state.selectedDate = "";
   state.selectedTimePeriods = [];
   state.selectedEmployeeId = "";
   state.data.availableEmployees = [];
+  state.data.selectedEmployeeAvailablePeriods = [];
   state.bookingStep = 2;
   renderUserDashboard();
 }
 
-/** 保存当前日期并留在第二步，继续等待用户选择一个或多个服务时段。 */
+/** 保存当前日期并留在第二步，等待用户确认后查询当天可预约护工。 */
 function selectBookingDate(date) {
   if (!date) throw new Error("请选择服务日期");
   if (state.selectedDate !== date) {
     state.selectedTimePeriods = [];
     state.selectedEmployeeId = "";
     state.data.availableEmployees = [];
+    state.data.selectedEmployeeAvailablePeriods = [];
   }
   state.selectedDate = date;
   renderUserDashboard();
 }
 
-/** 在第二步选中或取消一个服务时段；更改后必须重新查询可预约护工。 */
+/** 在第四步选中或取消护工仍然可服务的一个时段。 */
 function toggleBookingPeriod(period) {
   if (!TIME_PERIODS.some(([value]) => value === period)) {
     throw new Error("服务时段无效");
+  }
+  const availablePeriods = state.data.selectedEmployeeAvailablePeriods || [];
+  if (!availablePeriods.includes(period)) {
+    throw new Error("该服务人员在这个时段不可预约");
   }
   const selected = new Set(state.selectedTimePeriods);
   if (selected.has(period)) selected.delete(period);
@@ -945,21 +1059,20 @@ function toggleBookingPeriod(period) {
   state.selectedTimePeriods = TIME_PERIODS
     .map(([value]) => value)
     .filter((value) => selected.has(value));
-  state.selectedEmployeeId = "";
-  state.data.availableEmployees = [];
   renderUserDashboard();
 }
 
 /**
- * 确认第二步选中的日期和时段，查询全部所选时段均可用的护工后再进入第三步。
- * 选择与确认分开，避免老人误触日期或时段后立即离开当前页面。
+ * 确认第二步选中的日期，查询当天仍有空闲时段的护工后再进入第三步。
+ * 选择与确认分开，避免老人误触日期后立即离开当前页面。
  */
 async function confirmBookingDate() {
   if (!state.selectedDate) throw new Error("请先选择服务日期");
   if (state.selectedDate < today()) throw new Error("不能选择过去的日期");
-  if (!state.selectedTimePeriods.length) throw new Error("请至少选择一个服务时段");
   state.bookingStep = 3;
+  state.selectedTimePeriods = [];
   state.selectedEmployeeId = "";
+  state.data.selectedEmployeeAvailablePeriods = [];
   await loadAvailableEmployees(false);
   renderUserDashboard();
 }
@@ -968,13 +1081,27 @@ async function confirmBookingDate() {
 function chooseBookingEmployee(employeeId) {
   // 再次点击当前护工（包括右侧向上箭头）时收起资料并取消当前选择。
   state.selectedEmployeeId = String(state.selectedEmployeeId) === String(employeeId) ? "" : employeeId;
+  state.selectedTimePeriods = [];
+  state.data.selectedEmployeeAvailablePeriods = [];
   renderUserDashboard();
 }
 
-/** 确认第三步选择的护工后，再进入最终预约确认步骤。 */
-function confirmBookingEmployee() {
+/** 确认第三步选择的护工，读取其剩余时段后进入第四步。 */
+async function confirmBookingEmployee() {
   if (!state.selectedEmployeeId) throw new Error("请先选择服务人员");
+  state.selectedTimePeriods = [];
+  await loadSelectedEmployeeAvailablePeriods();
+  if (!state.data.selectedEmployeeAvailablePeriods.length) {
+    throw new Error("该服务人员当天已经没有可预约时段，请返回选择其他人员");
+  }
   state.bookingStep = 4;
+  renderUserDashboard();
+}
+
+/** 确认第四步选择的一个或多个服务时段，再进入最终确认页。 */
+function confirmBookingTime() {
+  if (!state.selectedTimePeriods.length) throw new Error("请至少选择一个服务时段");
+  state.bookingStep = 5;
   renderUserDashboard();
 }
 
@@ -989,24 +1116,25 @@ function bookingBack() {
 }
 
 /**
- * 组合四步预约页面的公共标题、进度条和当前步骤内容。
+ * 组合五步预约页面的公共标题、进度条和当前步骤内容。
  * @returns {string} 可写入 content 容器的 HTML 字符串。
  */
 function renderBookingWizard(services, employees) {
   const step = state.bookingStep;
-  const headings = ["您需要什么服务？", "选择服务日期和时间", "选择服务人员", "确认预约信息"];
+  const headings = ["您需要什么服务？", "您希望哪天服务？", "选择服务人员", "选择服务时间", "确认预约信息"];
   let body = "";
 
   if (step === 1) body = renderServiceChoices(services);
-  if (step === 2) body = renderDateChoices(services);
+  if (step === 2) body = renderDateChoices();
   if (step === 3) body = renderStaffChoices(employees);
-  if (step === 4) body = renderBookingConfirmation(services, employees);
+  if (step === 4) body = renderEmployeeTimeChoices(services, employees);
+  if (step === 5) body = renderBookingConfirmation(services, employees);
 
   return `
     <div class="senior-shell booking-wizard">
       <div class="booking-toolbar">
         <button class="senior-back" type="button" data-action="booking-back">← 返回上一步</button>
-        <span>第 ${step} 步，共 4 步</span>
+        <span>第 ${step} 步，共 5 步</span>
       </div>
       ${renderBookingProgress(step)}
       <header class="booking-heading"><h3>${headings[step - 1]}</h3></header>
@@ -1015,9 +1143,9 @@ function renderBookingWizard(services, employees) {
   `;
 }
 
-/** 根据当前步骤生成四段进度指示，已完成和当前步骤使用 active 类名。 */
+/** 根据当前步骤生成五段进度指示，已完成和当前步骤使用 active 类名。 */
 function renderBookingProgress(step) {
-  const labels = ["选服务", "选日期时段", "选人员", "确认"];
+  const labels = ["选服务", "选日期", "选人员", "选时间", "确认"];
   return `<div class="booking-progress" aria-label="预约进度">${labels.map((label, index) => `
     <div class="${index + 1 <= step ? "active" : ""}"><span>${index + 1}</span><small>${label}</small></div>
   `).join("")}</div>`;
@@ -1035,13 +1163,10 @@ function renderServiceChoices(services) {
   `).join("")}</div>`;
 }
 
-/** 提供日期选择、四个可多选服务时段，以及按照时段数计算的预计费用。 */
-function renderDateChoices(services) {
+/** 提供今天、明天、后天和其他日期选择；日期确认后才查询当天可用护工。 */
+function renderDateChoices() {
   const dates = [0, 1, 2].map((offset) => offsetDate(offset));
   const names = ["今天", "明天", "后天"];
-  const service = services.find((item) => String(item.id) === String(state.selectedServiceId));
-  const slotCount = state.selectedTimePeriods.length;
-  const totalAmount = calculateBookingTotal(service, slotCount);
   return `
     <div class="date-choice-grid">
       ${dates.map((date, index) => `
@@ -1052,30 +1177,8 @@ function renderDateChoices(services) {
     <div class="custom-date-choice">
       <label class="field"><span>选择其他日期</span><input id="bookingDate" type="date" min="${today()}" value="${escapeHtml(state.selectedDate)}" required aria-label="选择其他服务日期"></label>
     </div>
-    <section class="booking-time-section" aria-labelledby="booking-time-title">
-      <div class="booking-time-heading">
-        <h4 id="booking-time-title">选择服务时段</h4>
-        <span>可以选择一个或多个时段</span>
-      </div>
-      <div class="booking-time-grid">
-        ${TIME_PERIODS.map(([value, label, time]) => {
-          const selected = state.selectedTimePeriods.includes(value);
-          return `<button class="booking-time-choice ${selected ? "selected" : ""}" type="button" data-action="select-booking-period" data-period="${value}" aria-pressed="${selected}" ${state.selectedDate ? "" : "disabled"}>
-            <strong>${label}</strong><span>${time}</span><b aria-hidden="true">✓</b>
-          </button>`;
-        }).join("")}
-      </div>
-      <div class="booking-time-summary">
-        <p>${state.selectedDate
-          ? slotCount
-            ? `已选择 <strong>${slotCount}</strong> 个时段：${formatTimePeriods(state.selectedTimePeriods)}`
-            : "请选择至少一个服务时段"
-          : "请先选择服务日期"}</p>
-        <p class="booking-price">预计费用：<strong>¥${formatMoney(totalAmount)}</strong><small>¥${formatMoney(service?.referencePrice)} × ${slotCount} 个时段</small></p>
-      </div>
-    </section>
     <div class="booking-step-action">
-      <button class="btn senior-primary date-next-button" type="button" data-action="use-custom-date" ${state.selectedDate && slotCount ? "" : "disabled"}>下一步：选择服务人员</button>
+      <button class="btn senior-primary date-next-button" type="button" data-action="use-custom-date" ${state.selectedDate ? "" : "disabled"}>下一步：查看当天可预约人员</button>
     </div>
   `;
 }
@@ -1087,8 +1190,8 @@ function renderDateChoices(services) {
 function renderStaffChoices(employees) {
   if (!employees.length) return `
     <div class="senior-empty">
-      <strong>${formatFriendlyDate(state.selectedDate)} 所选时段暂无可预约人员</strong>
-      <p>${formatTimePeriods(state.selectedTimePeriods)}，请返回上一步调整日期或时段。</p>
+      <strong>${formatFriendlyDate(state.selectedDate)} 暂无可预约人员</strong>
+      <p>请返回上一步选择其他日期。</p>
     </div>
   `;
   const selectedEmployee = employees.find((employee) => String(employee.id) === String(state.selectedEmployeeId));
@@ -1099,7 +1202,7 @@ function renderStaffChoices(employees) {
         <article class="staff-choice-card ${selected ? "selected" : ""}">
           <button class="staff-choice" type="button" data-action="choose-employee" data-employee-id="${employee.id}" aria-expanded="${selected}" aria-pressed="${selected}">
             <span class="staff-avatar">${renderEmployeeAvatarContent(employee)}</span>
-            <span class="staff-choice-copy"><strong>${escapeHtml(employee.name)}</strong><small>${escapeHtml(employee.specialty || "平台服务人员")} · 所选时段均可预约</small></span>
+            <span class="staff-choice-copy"><strong>${escapeHtml(employee.name)}</strong><small>${escapeHtml(employee.specialty || "平台服务人员")} · 当天有空闲时段</small></span>
             <span class="staff-expand" aria-hidden="true">⌄</span>
           </button>
           ${selected ? renderStaffBasicInfo(employee) : ""}
@@ -1107,7 +1210,7 @@ function renderStaffChoices(employees) {
     }).join("")}</div>
     <div class="staff-confirm-bar">
       <p>${selectedEmployee ? `已选择：<strong>${escapeHtml(selectedEmployee.name)}</strong>` : "请点击一位服务人员查看基本信息"}</p>
-      <button class="btn senior-primary staff-next-button" type="button" data-action="confirm-employee" ${selectedEmployee ? "" : "disabled"}>下一步：确认预约</button>
+      <button class="btn senior-primary staff-next-button" type="button" data-action="confirm-employee" ${selectedEmployee ? "" : "disabled"}>下一步：选择服务时间</button>
     </div>`;
 }
 
@@ -1124,13 +1227,54 @@ function renderStaffBasicInfo(employee) {
         <div><dt>年龄</dt><dd>${age}</dd></div>
         <div><dt>接单状态</dt><dd>正在接单</dd></div>
         <div><dt>可预约日期</dt><dd>${formatFriendlyDate(state.selectedDate)}</dd></div>
-        <div class="staff-info-wide"><dt>可预约时间</dt><dd>${formatTimePeriods(state.selectedTimePeriods)}</dd></div>
+        <div class="staff-info-wide"><dt>可预约时间</dt><dd>选定后在下一步查看具体时段</dd></div>
         <div class="staff-info-wide"><dt>擅长服务</dt><dd>${escapeHtml(employee.specialty || "暂未填写")}</dd></div>
         <div class="staff-info-wide"><dt>从业经历</dt><dd>${escapeHtml(employee.experience || "暂未填写")}</dd></div>
       </dl>
       ${employee.bio ? `<p class="staff-bio">${escapeHtml(employee.bio)}</p>` : ""}
       <p>联系电话将在预约成功后显示</p>
     </div>`;
+}
+
+/** 选定护工后展示其在所选日期的剩余时段，并允许老人多选。 */
+function renderEmployeeTimeChoices(services, employees) {
+  const service = services.find((item) => String(item.id) === String(state.selectedServiceId));
+  const employee = employees.find((item) => String(item.id) === String(state.selectedEmployeeId));
+  if (!service || !employee) return `<div class="senior-empty">服务人员信息不完整，请返回上一步重新选择。</div>`;
+  const availablePeriods = state.data.selectedEmployeeAvailablePeriods || [];
+  const availableSet = new Set(availablePeriods);
+  const slotCount = state.selectedTimePeriods.length;
+  const totalAmount = calculateBookingTotal(service, slotCount);
+  return `
+    <section class="selected-staff-time-context" aria-label="当前选择">
+      <span class="staff-avatar">${renderEmployeeAvatarContent(employee)}</span>
+      <span><small>已选择服务人员</small><strong>${escapeHtml(employee.name)}</strong><em>${formatFriendlyDate(state.selectedDate)}</em></span>
+    </section>
+    <section class="booking-time-section employee-time-section" aria-labelledby="booking-time-title">
+      <div class="booking-time-heading">
+        <h4 id="booking-time-title">选择可服务时段</h4>
+        <span>可以选择一个或多个时段</span>
+      </div>
+      <div class="booking-time-grid">
+        ${TIME_PERIODS.map(([value, label, time]) => {
+          const available = availableSet.has(value);
+          const selected = state.selectedTimePeriods.includes(value);
+          return `<button class="booking-time-choice ${selected ? "selected" : ""} ${available ? "" : "unavailable"}" type="button" data-action="select-booking-period" data-period="${value}" aria-pressed="${selected}" ${available ? "" : "disabled"}>
+            <strong>${label}</strong><span>${time}</span><small>${available ? "可以预约" : "不可预约"}</small><b aria-hidden="true">✓</b>
+          </button>`;
+        }).join("")}
+      </div>
+      <div class="booking-time-summary">
+        <p>${slotCount
+          ? `已选择 <strong>${slotCount}</strong> 个时段：${formatTimePeriods(state.selectedTimePeriods)}`
+          : `该护工当天有 <strong>${availablePeriods.length}</strong> 个可预约时段，请至少选择一个`}</p>
+        <p class="booking-price">预计费用：<strong>¥${formatMoney(totalAmount)}</strong><small>¥${formatMoney(service.referencePrice)} × ${slotCount} 个时段</small></p>
+      </div>
+    </section>
+    <div class="booking-step-action">
+      <button class="btn senior-primary date-next-button" type="button" data-action="confirm-booking-time" ${slotCount ? "" : "disabled"}>下一步：确认预约</button>
+    </div>
+  `;
 }
 
 /**
@@ -1158,21 +1302,67 @@ function renderBookingConfirmation(services, employees) {
   `;
 }
 
-/** 生成预约状态筛选栏和纵向预约卡片列表。 */
+/**
+ * 生成预约状态筛选栏和纵向预约卡片列表。
+ * 后端返回结果在前端按预约 ID 倒序排列，再按每页 5 条切片，确保新创建的预约始终优先显示。
+ */
 function renderUserAppointments(appointments) {
   const filters = [["", "全部"], ["PENDING", "待服务"], ["COMPLETED", "已完成"], ["CANCELLED", "已取消"]];
+  const sortedAppointments = [...appointments].sort((left, right) => Number(right.id || 0) - Number(left.id || 0));
+  const totalPages = Math.max(1, Math.ceil(sortedAppointments.length / USER_APPOINTMENTS_PAGE_SIZE));
+  state.userAppointmentsPage = Math.min(Math.max(1, state.userAppointmentsPage), totalPages);
+  const pageStart = (state.userAppointmentsPage - 1) * USER_APPOINTMENTS_PAGE_SIZE;
+  const pageAppointments = sortedAppointments.slice(pageStart, pageStart + USER_APPOINTMENTS_PAGE_SIZE);
   return `
     <div class="senior-shell senior-appointments">
       <div class="appointments-heading">
-        <button class="senior-back" type="button" data-action="user-home">← 返回服务首页</button>
-        <h3>我的预约</h3>
+        <div class="appointments-title-block">
+          <button class="senior-back" type="button" data-action="user-home">← 返回服务首页</button>
+          <h3>我的预约</h3>
+        </div>
+        <div class="appointments-refresh" aria-live="polite">
+          <span class="appointments-refresh-status">
+            <span class="refresh-status-dot" aria-hidden="true"></span>
+            <span><strong>每 15 秒自动刷新</strong><small>上次更新：${escapeHtml(state.userAppointmentsLastUpdated || "刚刚")}</small></span>
+          </span>
+          <button class="btn secondary" type="button" data-action="refresh-user-appointments">立即刷新</button>
+        </div>
       </div>
       <div class="senior-filter" aria-label="预约状态筛选">
         ${filters.map(([value, label]) => `<button type="button" class="${state.appointmentsFilter === value ? "active" : ""}" data-action="user-appointment-filter" data-status="${value}">${label}</button>`).join("")}
       </div>
-      ${appointments.length ? `<div class="appointment-card-list">${appointments.map(renderUserAppointmentCard).join("")}</div>` : `<div class="senior-empty">这里暂时没有预约记录。</div>`}
+      ${sortedAppointments.length ? `
+        <div class="appointments-result-meta">
+          <span>共 ${sortedAppointments.length} 条记录</span>
+          <strong>最新预约排在最前</strong>
+        </div>
+        <div class="appointment-card-list">${pageAppointments.map(renderUserAppointmentCard).join("")}</div>
+        ${renderUserAppointmentsPagination(sortedAppointments.length, totalPages)}
+      ` : `<div class="senior-empty">这里暂时没有预约记录。</div>`}
     </div>
   `;
+}
+
+/** 预约记录超过 5 条时显示上一页、页码和下一页。 */
+function renderUserAppointmentsPagination(totalItems, totalPages) {
+  if (totalItems <= USER_APPOINTMENTS_PAGE_SIZE) return "";
+  const currentPage = state.userAppointmentsPage;
+  return `
+    <nav class="appointments-pagination" aria-label="预约记录分页">
+      <button type="button" data-action="user-appointments-page" data-page="${currentPage - 1}" ${currentPage <= 1 ? "disabled" : ""}>← 上一页</button>
+      <span>第 <strong>${currentPage}</strong> 页，共 ${totalPages} 页</span>
+      <button type="button" data-action="user-appointments-page" data-page="${currentPage + 1}" ${currentPage >= totalPages ? "disabled" : ""}>下一页 →</button>
+    </nav>
+  `;
+}
+
+/** 切换预约记录页码，并把视线带回列表顶部。 */
+function changeUserAppointmentsPage(page) {
+  const totalItems = (state.data.userAppointments || []).length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / USER_APPOINTMENTS_PAGE_SIZE));
+  state.userAppointmentsPage = Math.min(Math.max(1, page), totalPages);
+  renderUserDashboard();
+  document.querySelector(".senior-appointments")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 /**
@@ -1241,10 +1431,12 @@ async function bookEmployee(employeeId) {
   state.userView = "appointments";
   state.bookingStep = 1;
   state.appointmentsFilter = "";
+  state.userAppointmentsPage = 1;
   state.selectedDate = "";
   state.selectedTimePeriods = [];
   state.selectedServiceId = "";
   state.selectedEmployeeId = "";
+  state.data.selectedEmployeeAvailablePeriods = [];
   await loadUserDashboard();
   renderUserDashboard();
 }
@@ -1254,17 +1446,16 @@ async function cancelUserAppointment(id) {
   if (!confirm("确定要取消这个预约吗？")) return;
   await api(`/appointments/${id}/cancel`, { method: "PATCH" });
   notify("预约已取消", "success");
-  await loadUserDashboard();
-  renderUserDashboard();
+  await refreshUserAppointments(false);
 }
 
 /* ==================== 护工端 ====================
- * 护工端围绕“接单状态、下一项待服务任务、今日任务、全部任务”组织数据。
+ * 护工端围绕“接单状态、下一项待服务任务、全部任务和个人信息”组织数据。
  */
 
 /**
  * 加载护工资料和任务。
- * 全部任务页可能带状态筛选；为了仍能正确计算顶部概况，此时会额外请求一份未筛选任务。
+ * 工作任务页可能带状态筛选；为了仍能正确计算顶部概况，此时会额外请求一份未筛选任务。
  */
 async function loadEmployeeDashboard() {
   const me = await api("/employees/me");
@@ -1277,7 +1468,7 @@ async function loadEmployeeDashboard() {
   // 未完成学习或尚未通过答题时只需要个人培训状态，不请求工作台数据。
   if (!me.quizPassed || state.employeeView === "profile") return;
 
-  const query = state.employeeView === "all" ? statusQuery() : "";
+  const query = state.appointmentsFilter ? statusQuery() : "";
   const [appointments, allAppointments, availability, earnings] = await Promise.all([
     api(`/employees/me/appointments${query}`),
     query ? api("/employees/me/appointments") : Promise.resolve(null),
@@ -1312,7 +1503,9 @@ function renderEmployeeDashboard() {
     el.content.innerHTML = `
       <div class="employee-workbench">
         ${renderEmployeeViewTabs()}
-        ${renderEmployeeProfile(employee)}
+        <div class="employee-view-content">
+          ${renderEmployeeProfile(employee)}
+        </div>
       </div>`;
     return;
   }
@@ -1332,42 +1525,40 @@ function renderEmployeeDashboard() {
   el.content.innerHTML = `
     <div class="employee-workbench">
       ${renderEmployeeViewTabs()}
-      <section class="employee-overview">
-        <div class="employee-metrics" aria-label="任务概况">
-          <div><span>今日任务</span><strong>${todayTasks.length}</strong><small>项</small></div>
-          <div><span>待服务</span><strong>${pendingTasks.length}</strong><small>项</small></div>
-          <div><span>今日完成</span><strong>${completedToday}</strong><small>项</small></div>
-          <div class="income-metric"><span>已获得薪资总额</span><strong>¥${formatMoney(earnings)}</strong><small>按已完成服务参考价统计</small></div>
+      <div class="employee-view-content">
+        <section class="employee-overview">
+          <div class="employee-metrics" aria-label="任务概况">
+            <div><span>今日任务</span><strong>${todayTasks.length}</strong><small>项</small></div>
+            <div><span>待服务</span><strong>${pendingTasks.length}</strong><small>项</small></div>
+            <div><span>今日完成</span><strong>${completedToday}</strong><small>项</small></div>
+            <div class="income-metric"><span>已获得薪资总额</span><strong>¥${formatMoney(earnings)}</strong><small>按已完成服务参考价统计</small></div>
+          </div>
+          <label class="employee-status-switch">
+            <input id="employeeWorkingToggle" type="checkbox" ${employee.working ? "checked" : ""}>
+            <span class="switch-track" aria-hidden="true"><span></span></span>
+            <span class="switch-copy">
+              <strong>${employee.working ? "接单中" : "暂停接单"}</strong>
+              <small>${employee.working ? "可以接收新的服务预约" : "暂时不接收新的服务预约"}</small>
+            </span>
+          </label>
+        </section>
+
+        <div class="employee-profile-reminder">
+          <span>请前往“个人信息”确认或修改头像、联系电话和服务介绍，完整资料有助于老人选择服务人员。</span>
+          <button type="button" data-action="employee-view" data-view="profile">前往个人信息</button>
         </div>
-        <label class="employee-status-switch">
-          <input id="employeeWorkingToggle" type="checkbox" ${employee.working ? "checked" : ""}>
-          <span class="switch-track" aria-hidden="true"><span></span></span>
-          <span class="switch-copy">
-            <strong>${employee.working ? "接单中" : "暂停接单"}</strong>
-            <small>${employee.working ? "可以接收新的服务预约" : "暂时不接收新的服务预约"}</small>
-          </span>
-        </label>
-      </section>
 
-      <div class="employee-profile-reminder">
-        <span>请前往“个人信息”确认或修改头像、联系电话和服务介绍，完整资料有助于老人选择服务人员。</span>
-        <button type="button" data-action="employee-view" data-view="profile">前往个人信息</button>
+        ${renderEmployeeAvailability()}
+        ${renderEmployeeTaskWorkspace(nextTask, appointments)}
       </div>
-
-      ${renderEmployeeAvailability()}
-
-      ${state.employeeView === "all"
-        ? renderAllEmployeeTasks(appointments)
-        : renderEmployeeTodayView(nextTask, todayTasks)}
     </div>
   `;
 }
 
-/** 护工工作区的三个一级入口。 */
+/** 护工工作区合并为“工作任务”和“个人信息”两个左侧一级入口。 */
 function renderEmployeeViewTabs() {
   const tabs = [
-    ["today", "任务首页"],
-    ["all", "全部任务"],
+    ["tasks", "工作任务"],
     ["profile", "个人信息"]
   ];
   return `
@@ -1390,7 +1581,7 @@ function renderEmployeeProfile(employee) {
         <div><p>公开资料</p><h3>确认并完善个人信息</h3></div>
         <span>姓名、头像和服务介绍会展示给预约老人</span>
       </header>
-      <form class="employee-profile-form" data-submit="employee-profile">
+      <form class="employee-profile-form ${state.employeeProfileDirty ? "has-unsaved-changes" : ""}" data-submit="employee-profile">
         <aside class="employee-avatar-editor">
           <div id="employeeAvatarPreview" class="employee-avatar-preview">
             ${renderEmployeeAvatarContent(previewEmployee)}
@@ -1412,7 +1603,7 @@ function renderEmployeeProfile(employee) {
           <label class="field"><span>擅长服务</span><input name="specialty" maxlength="100" value="${attr(employee.specialty)}" placeholder="例如：陪诊、助浴、日常照护"></label>
           <label class="field"><span>从业经历</span><textarea name="experience" maxlength="200" rows="3" placeholder="例如：从事居家照护5年，熟悉行动不便老人照护">${escapeHtml(employee.experience)}</textarea></label>
           <label class="field"><span>个人简介</span><textarea name="bio" maxlength="500" rows="4" placeholder="向老人和家属简单介绍您的服务特点">${escapeHtml(employee.bio)}</textarea></label>
-          <div class="profile-save-bar"><span>修改后请及时保存</span><button class="btn" type="submit">保存个人信息</button></div>
+          <div class="profile-save-bar"><span data-profile-save-hint>${state.employeeProfileDirty ? "有尚未保存的修改" : "修改后请及时保存"}</span><button class="btn" type="submit">保存个人信息</button></div>
         </div>
       </form>
     </section>`;
@@ -1547,7 +1738,7 @@ async function submitEmployeeQuiz(answers) {
 }
 
 /**
- * 工作台中的星期一至星期五可工作时段表。
+ * 工作台中的星期一至星期日可工作时段表。
  * 已保存的时段来自后端，勾选状态不会只停留在当前浏览器中。
  */
 function renderEmployeeAvailability() {
@@ -1561,6 +1752,11 @@ function renderEmployeeAvailability() {
         <span class="availability-note">可多选，修改后请保存</span>
       </div>
       <form data-submit="employee-schedule">
+        <div class="availability-bulk-actions">
+          <span>快速选择</span>
+          <button class="btn secondary" type="button" data-action="select-all-availability">✓ 全部选中</button>
+          <button class="btn ghost" type="button" data-action="clear-all-availability">全部清空</button>
+        </div>
         <div class="availability-grid" role="group" aria-label="每周可工作时段">
           <div class="availability-corner">时段</div>
           ${days.map(([, label]) => `<div class="availability-heading"><strong>${label}</strong></div>`).join("")}
@@ -1581,19 +1777,59 @@ function renderEmployeeAvailability() {
 /** 收集时间表中的所有复选框并整体保存，空列表表示暂时不安排工作。 */
 async function saveEmployeeAvailability(form) {
   const slots = Array.from(form.querySelectorAll('input[name="slot"]:checked')).map((input) => input.value);
+  const message = slots.length
+    ? `确定保存这 ${slots.length} 个可工作时段吗？保存后老人可在这些时间预约您。`
+    : "当前没有选择任何时段，保存后您将不会出现在可预约人员列表中。确定继续吗？";
+  if (!confirm(message)) return;
   await api("/employees/me/availability", { method: "PUT", body: { slots } });
   state.data.employeeAvailability = slots;
   notify("可工作时间已保存", "success");
   renderEmployeeDashboard();
 }
 
-/** 在任务首页和全部任务之间切换，并重置旧的状态筛选。 */
+/** 一键勾选或清空时间表，并立即更新已选数量。 */
+function setAllEmployeeAvailability(button, checked) {
+  const form = button.closest('form[data-submit="employee-schedule"]');
+  if (!form) return;
+  form.querySelectorAll('input[name="slot"]').forEach((input) => {
+    input.checked = checked;
+  });
+  updateEmployeeAvailabilityCounter(form);
+}
+
+/** 同步工作时间表下方的已选时段数量。 */
+function updateEmployeeAvailabilityCounter(form) {
+  const counter = form?.querySelector("[data-availability-count]");
+  if (counter) counter.textContent = form.querySelectorAll('input[name="slot"]:checked').length;
+}
+
+/** 在工作任务和个人信息之间切换；离开有未保存修改的资料页前先征得确认。 */
 async function showEmployeeView(view) {
-  state.employeeView = ["today", "all", "profile"].includes(view) ? view : "today";
+  const nextView = ["tasks", "profile"].includes(view) ? view : "tasks";
+  if (nextView === state.employeeView) return;
+  if (!confirmDiscardEmployeeProfile()) return;
+  state.employeeView = nextView;
   state.appointmentsFilter = "";
   state.pendingEmployeeAvatar = null;
+  state.employeeProfileDirty = false;
   await loadEmployeeDashboard();
   renderEmployeeDashboard();
+}
+
+/** 个人资料有修改时询问是否放弃，供切页、刷新和退出入口统一调用。 */
+function confirmDiscardEmployeeProfile() {
+  if (state.role !== "EMPLOYEE" || state.employeeView !== "profile" || !state.employeeProfileDirty) return true;
+  return confirm("个人信息还有未保存的修改。确定放弃修改并离开当前页面吗？");
+}
+
+/** 标记资料表单为未保存状态，并更新页面提示。 */
+function markEmployeeProfileDirty() {
+  if (state.employeeView !== "profile") return;
+  state.employeeProfileDirty = true;
+  const form = document.querySelector('form[data-submit="employee-profile"]');
+  form?.classList.add("has-unsaved-changes");
+  const hint = form?.querySelector("[data-profile-save-hint]");
+  if (hint) hint.textContent = "有尚未保存的修改";
 }
 
 /** 返回头像图片；未上传头像时使用姓名首字作为占位。 */
@@ -1620,6 +1856,7 @@ async function previewEmployeeAvatar(file) {
   }
   state.pendingEmployeeAvatar = avatarData;
   updateEmployeeAvatarPreview();
+  markEmployeeProfileDirty();
 }
 
 /** 把头像最长边缩放到512像素，并使用 WebP 压缩，减少接口和数据库负担。 */
@@ -1657,6 +1894,7 @@ function removeEmployeeAvatarPreview() {
   const fileInput = document.getElementById("employeeAvatarInput");
   if (fileInput) fileInput.value = "";
   updateEmployeeAvatarPreview();
+  markEmployeeProfileDirty();
 }
 
 /** 只刷新头像区域，避免护工正在编辑的其他表单字段丢失。 */
@@ -1687,22 +1925,23 @@ async function saveEmployeeProfile(payload) {
   if (localStorage.getItem("eldercare.token")) localStorage.setItem("eldercare.name", body.name);
   if (sessionStorage.getItem("eldercare.token")) sessionStorage.setItem("eldercare.name", body.name);
   state.pendingEmployeeAvatar = null;
+  state.employeeProfileDirty = false;
   notify("个人信息已保存", "success");
   await loadEmployeeDashboard();
   renderSession();
   renderEmployeeDashboard();
 }
 
-/** 切换到全部任务页，并按后端预约状态重新查询任务。 */
+/** 在合并后的工作任务页按后端预约状态重新查询任务。 */
 async function filterEmployeeTasks(status) {
-  state.employeeView = "all";
+  state.employeeView = "tasks";
   state.appointmentsFilter = status;
   await loadEmployeeDashboard();
   renderEmployeeDashboard();
 }
 
-/** 组合“下一项待服务任务”和“今日任务”两个工作区域。 */
-function renderEmployeeTodayView(nextTask, todayTasks) {
+/** 合并“任务首页”和“全部任务”，在同一页面展示下一项任务及可筛选任务记录。 */
+function renderEmployeeTaskWorkspace(nextTask, appointments) {
   return `
     <section class="next-task-section">
       <div class="employee-section-heading">
@@ -1710,10 +1949,7 @@ function renderEmployeeTodayView(nextTask, todayTasks) {
       </div>
       ${nextTask ? renderEmployeeNextTask(nextTask) : `<div class="employee-empty"><strong>当前没有待服务任务</strong><p>新的预约任务会显示在这里。</p></div>`}
     </section>
-    <section class="today-task-section">
-      <div class="employee-section-heading"><div><p>${formatFriendlyDate(today())}</p><h3>今日任务</h3></div></div>
-      ${todayTasks.length ? `<div class="employee-task-list">${todayTasks.map((task) => renderEmployeeTaskCard(task, true)).join("")}</div>` : `<div class="employee-empty">今天暂时没有服务任务。</div>`}
-    </section>
+    ${renderAllEmployeeTasks(appointments)}
   `;
 }
 
@@ -1733,12 +1969,12 @@ function renderEmployeeNextTask(task) {
   `;
 }
 
-/** 生成全部任务页面，包括状态筛选按钮和任务卡片列表。 */
+/** 生成合并工作页中的任务记录，包括状态筛选按钮和任务卡片列表。 */
 function renderAllEmployeeTasks(appointments) {
   const filters = [["", "全部"], ["PENDING", "待服务"], ["COMPLETED", "已完成"], ["CANCELLED", "已取消"]];
   return `
     <section class="all-task-section">
-      <div class="employee-section-heading"><div><p>任务记录</p><h3>全部任务</h3></div></div>
+      <div class="employee-section-heading"><div><p>任务记录</p><h3>全部工作任务</h3></div></div>
       <div class="employee-task-filter">
         ${filters.map(([value, label]) => `<button type="button" class="${state.appointmentsFilter === value ? "active" : ""}" data-action="employee-task-filter" data-status="${value}">${label}</button>`).join("")}
       </div>
@@ -1803,10 +2039,15 @@ function employeeTaskStatus(status) {
  * 这是“接单中/暂停接单”，与单个任务是否完成是两个独立概念。
  */
 async function updateEmployeeStatus(working) {
+  const message = working
+    ? "确定开始接单吗？开启后，老人可以在您的可工作时间预约服务。"
+    : "确定暂停接单吗？暂停后不会接收新预约，但已有任务仍需按时处理。";
+  if (!confirm(message)) return false;
   await api("/employees/me/status", { method: "PATCH", body: { isWorking: working } });
   notify(working ? "已进入接单状态" : "已暂停接收新预约", "success");
   await loadEmployeeDashboard();
   renderEmployeeDashboard();
+  return true;
 }
 
 /** 经二次确认后将指定任务标记为完成，并重新加载任务概况。 */
@@ -1872,6 +2113,7 @@ async function submitEmployeeCancellation(id, payload) {
     ? String(payload.customReason || "").trim()
     : selectedReason;
   if (!reason) throw new Error("请选择或填写取消原因");
+  if (!confirm(`确定取消这项任务吗？\n取消原因：${reason}`)) return;
   await api(`/employees/me/appointments/${id}/cancel`, {
     method: "PATCH",
     body: { reason }
@@ -2339,6 +2581,16 @@ function formatMoney(value) {
   return Number.isFinite(amount)
     ? amount.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : "0.00";
+}
+
+/** 返回自动刷新状态使用的本地时分秒。 */
+function formatRefreshTime(value = new Date()) {
+  return value.toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  });
 }
 
 /** 把后端时段代码转换为“早间 06:00-10:00”一类可读文本，并保持一天内的时间顺序。 */
