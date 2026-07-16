@@ -5,8 +5,10 @@ import com.eldercare.dto.AvailabilityRequest;
 import com.eldercare.dto.EmployeeProfileRequest;
 import com.eldercare.dto.TrainingQuizRequest;
 import com.eldercare.entity.Employee;
+import com.eldercare.entity.ServiceItem;
 import com.eldercare.repository.EmployeeRepository;
 import com.eldercare.repository.EmployeeTrainingRepository;
+import com.eldercare.repository.ServiceRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -20,6 +22,7 @@ class EmployeeServiceTest {
 
     private FakeEmployeeRepository employeeRepo;
     private FakeTrainingRepository trainingRepo;
+    private FakeServiceRepository serviceRepo;
     private EmployeeService employeeService;
     private Employee employee;
 
@@ -30,7 +33,8 @@ class EmployeeServiceTest {
         employee.setUsername("worker");
         employeeRepo = new FakeEmployeeRepository(employee);
         trainingRepo = new FakeTrainingRepository();
-        employeeService = new EmployeeService(employeeRepo, trainingRepo);
+        serviceRepo = new FakeServiceRepository();
+        employeeService = new EmployeeService(employeeRepo, trainingRepo, serviceRepo);
     }
 
     @Test
@@ -123,6 +127,29 @@ class EmployeeServiceTest {
         assertNull(employeeRepo.savedName);
     }
 
+    @Test
+    void employeeCapabilitiesUseActiveAdministratorServices() {
+        serviceRepo.activeServices = List.of(service(1, "陪诊服务"), service(2, "助浴服务"));
+        EmployeeProfileRequest request = new EmployeeProfileRequest();
+        request.setName("王护工");
+        request.setAge(38);
+        request.setPhone("13800000000");
+        request.setServiceIds(List.of(2, 1, 2));
+
+        employeeService.updateProfile("worker", request);
+
+        assertEquals(List.of(1, 2), employeeRepo.savedCapabilityIds);
+        assertEquals("陪诊服务、助浴服务", employeeRepo.savedSpecialty);
+    }
+
+    private ServiceItem service(int id, String name) {
+        ServiceItem item = new ServiceItem();
+        item.setId(id);
+        item.setName(name);
+        item.setActive(true);
+        return item;
+    }
+
     private static class FakeEmployeeRepository extends EmployeeRepository {
         private final Employee employee;
         private boolean statusUpdated;
@@ -133,6 +160,7 @@ class EmployeeServiceTest {
         private String savedSpecialty;
         private String savedExperience;
         private String savedBio;
+        private List<Integer> savedCapabilityIds;
 
         FakeEmployeeRepository(Employee employee) {
             super(null);
@@ -164,6 +192,11 @@ class EmployeeServiceTest {
             savedExperience = experience;
             savedBio = bio;
         }
+
+        @Override
+        public void replaceServiceCapabilities(int employeeId, List<Integer> serviceIds) {
+            savedCapabilityIds = serviceIds;
+        }
     }
 
     private static class FakeTrainingRepository extends EmployeeTrainingRepository {
@@ -186,6 +219,19 @@ class EmployeeServiceTest {
         @Override
         public void replaceAvailability(int employeeId, List<String> slots) {
             savedSlots = slots;
+        }
+    }
+
+    private static class FakeServiceRepository extends ServiceRepository {
+        private List<ServiceItem> activeServices = List.of();
+
+        FakeServiceRepository() {
+            super(null);
+        }
+
+        @Override
+        public List<ServiceItem> findActive() {
+            return activeServices;
         }
     }
 }

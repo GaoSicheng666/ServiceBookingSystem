@@ -42,8 +42,9 @@ public class UserController {
     public ApiResponse<List<Employee>> availableEmployees(
             @RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
-            @RequestParam(name = "timePeriod", required = false) List<String> timePeriods) {
-        List<Employee> list = bookingService.availableEmployees(date, timePeriods);
+            @RequestParam(name = "timePeriod", required = false) List<String> timePeriods,
+            @RequestParam(required = false) Integer serviceId) {
+        List<Employee> list = bookingService.availableEmployees(date, timePeriods, serviceId);
         list.forEach(e -> e.setPassword(null));
         return ApiResponse.ok(list);
     }

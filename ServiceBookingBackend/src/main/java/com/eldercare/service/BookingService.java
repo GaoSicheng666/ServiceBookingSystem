@@ -49,13 +49,19 @@ public class BookingService {
      * 未指定时段时返回当天至少还有一个空闲时段的员工；旧客户端传入时段时保留原筛选方式。
      */
     public List<Employee> availableEmployees(LocalDate date, List<String> timePeriods) {
+        return availableEmployees(date, timePeriods, null);
+    }
+
+    public List<Employee> availableEmployees(LocalDate date, List<String> timePeriods,
+                                             Integer serviceId) {
         date = validateQueryDate(date);
         if (timePeriods == null || timePeriods.isEmpty()) {
-            return employeeRepo.findAvailableOnDate(date, date.getDayOfWeek().getValue());
+            return employeeRepo.findAvailableOnDate(
+                    date, date.getDayOfWeek().getValue(), serviceId);
         }
         List<String> normalizedPeriods = normalizeTimePeriods(timePeriods);
         return employeeRepo.findAvailable(
-                date, date.getDayOfWeek().getValue(), normalizedPeriods);
+                date, date.getDayOfWeek().getValue(), normalizedPeriods, serviceId);
     }
 
     /** 查询指定员工在某天仍可被老人选择的具体时段。 */
@@ -108,6 +114,9 @@ public class BookingService {
                 .orElseThrow(() -> new BusinessException(2004, "服务项目不存在"));
         if (!service.isActive()) {
             throw new BusinessException(2004, "该服务项目已下架");
+        }
+        if (!employeeRepo.hasServiceCapability(emp.getId(), service.getId())) {
+            throw new BusinessException(2003, "该员工未选择此项服务能力");
         }
 
         LocalDate date = req.getAppointmentDate();

@@ -50,7 +50,7 @@ src/main/java/com/eldercare/
 └── util/          PasswordEncoder(PBKDF2,兼容旧数据)
 src/main/resources/
 ├── application.yml   配置(数据库/JWT,均可用环境变量覆盖)
-└── schema.sql        建表脚本 + 初始数据(含培训状态与工作时段表,启动时自动执行)
+└── schema.sql        建表脚本 + 初始数据(含培训、工作时段与护工服务能力表,启动时自动执行)
 ```
 
 ---
@@ -146,13 +146,14 @@ mvn package -DskipTests
 | 公共 | POST | `/api/auth/login` | 登录,返回 token/role/name |
 | 用户 | GET | `/api/users/me` | 我的信息 |
 | 用户 | GET | `/api/services` | 服务项目列表 |
-| 用户 | GET | `/api/employees/available?date=2026-07-15` | 查询当天至少还有一个空闲时段的员工 |
+| 用户 | GET | `/api/employees/available?date=2026-07-15&serviceId=1` | 查询能完成所选服务且当天至少还有一个空闲时段的员工 |
 | 用户 | GET | `/api/employees/{id}/available-time-periods?date=2026-07-15` | 查询选定员工当天剩余可预约时段 |
 | 用户 | POST | `/api/appointments` | 下预约单，提交日期和一个或多个时段 |
 | 用户 | GET | `/api/appointments/me?status=` | 我的预约+历史 |
 | 用户 | PATCH | `/api/appointments/{id}/cancel` | 取消预约 |
 | 员工 | GET | `/api/employees/me` | 我的信息 |
-| 员工 | PUT | `/api/employees/me/profile` | 修改头像、联系方式和公开服务介绍 |
+| 员工 | GET | `/api/employees/me/capabilities` | 查询本人已选择的可胜任服务项目 ID |
+| 员工 | PUT | `/api/employees/me/profile` | 修改头像、联系方式、公开介绍和可胜任服务 |
 | 员工 | PATCH | `/api/employees/me/training/complete` | 确认完成岗前学习 |
 | 员工 | POST | `/api/employees/me/training/quiz` | 提交 4 道培训题 |
 | 员工 | GET/PUT | `/api/employees/me/availability` | 查询或保存每周可工作时段 |
@@ -221,7 +222,7 @@ curl -X PATCH http://localhost:8080/api/employees/me/status \
 
 **6. 老人先按日期查员工，再查询选定员工的剩余时段并下单**(用老人 token)
 ```bash
-curl "http://localhost:8080/api/employees/available?date=2026-07-15" -H "Authorization: Bearer <老人token>"
+curl "http://localhost:8080/api/employees/available?date=2026-07-15&serviceId=1" -H "Authorization: Bearer <老人token>"
 
 curl "http://localhost:8080/api/employees/1/available-time-periods?date=2026-07-15" -H "Authorization: Bearer <老人token>"
 
@@ -251,11 +252,11 @@ curl -X PATCH http://localhost:8080/api/employees/me/appointments/1/cancel \
 - **三角色统一登录**:登录接口依次匹配 用户→员工→管理员;修复了原 JavaFX 版登录时"空值未 return"的逻辑缺陷。
 - **密码安全**:沿用原项目 PBKDF2(12 万次迭代 + 随机盐);种子/旧明文密码在首次登录时自动升级为哈希。
 - **防并发重复预约**:下单在事务中用 `SELECT ... FOR UPDATE` 行锁，保证同一员工或同一老人不会在同一天的同一时段重复预约；不同且不重叠的时段可以分别预约。
-- **预约增强**:老人先选日期，系统列出当天至少还有一个空闲时段的护工；选定护工后再显示其当天剩余时段供老人多选。预约单含服务、日期、时段和状态，提交时会再次校验排班及冲突。
+- **预约增强**:老人先选服务和日期，系统只列出选择了该服务能力且当天至少还有一个空闲时段的护工；选定护工后再显示其当天剩余时段供老人多选。预约单含服务、日期、时段和状态，提交时会再次校验服务能力、排班及冲突。
 - **金额快照**:下单总额等于服务参考单价乘所选时段数，单价和总额保存在 `appointment_billing`，管理员日后改价不会影响历史订单；护工累计收入只汇总已完成订单。
 - **取消原因留痕**:护工取消预约时必须选择预设原因或填写其他原因，发起方和原因保存在 `appointment_cancellations`，老人、护工和管理员都能查看。
 - **岗前准入**:护工需完成学习并在 4 道题中答对至少 3 道；未通过者不能接单，也不会出现在可预约列表中。
-- **护工个人资料**:护工可维护头像、姓名、年龄、联系电话、擅长服务、从业经历和个人简介；公开资料会展示在老人选择服务人员的页面。
+- **护工个人资料**:护工可维护头像、姓名、年龄、联系电话、从业经历和个人简介，并从管理员上架项目中选择可胜任服务；关联保存在 `employee_service_capabilities`，公开资料会展示在老人选择服务人员的页面。
 - **工作时间持久化**:星期一至星期日每天四个时段的选择保存在 `employee_availability` 表中，时段为 06:00-10:00、10:00-14:00、14:00-18:00、18:00-22:00。
 - **权限隔离**:`/api/admin/**` 由拦截器强制要求 ADMIN 角色。
 - **单账号单会话**:每次登录都会覆盖该账号的有效会话编号，后登录设备会使旧设备 JWT 失效。

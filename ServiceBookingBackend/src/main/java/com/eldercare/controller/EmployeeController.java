@@ -36,6 +36,12 @@ public class EmployeeController {
         return ApiResponse.ok(employeeService.getSelf(CurrentUser.username()));
     }
 
+    /** 当前护工从管理员服务项目中选择的可胜任服务。 */
+    @GetMapping("/me/capabilities")
+    public ApiResponse<List<Integer>> capabilities() {
+        return ApiResponse.ok(employeeService.getServiceCapabilities(CurrentUser.username()));
+    }
+
     /** 修改当前护工的头像、联系方式和公开服务介绍。 */
     @PutMapping("/me/profile")
     public ApiResponse<Void> updateProfile(@Valid @RequestBody EmployeeProfileRequest request) {

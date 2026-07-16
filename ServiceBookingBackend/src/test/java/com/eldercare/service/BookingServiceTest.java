@@ -36,6 +36,15 @@ class BookingServiceTest {
     }
 
     @Test
+    void selectedServiceIsForwardedToAvailableEmployeeQuery() {
+        LocalDate date = LocalDate.now().plusDays(2);
+
+        bookingService.availableEmployees(date, null, 5);
+
+        assertEquals(5, employeeRepo.queriedServiceId);
+    }
+
+    @Test
     void legacyPeriodQueryStillNormalizesPeriodOrder() {
         LocalDate date = LocalDate.now().plusDays(3);
 
@@ -74,6 +83,7 @@ class BookingServiceTest {
         private LocalDate queriedDate;
         private Integer queriedWeekday;
         private List<String> queriedPeriods;
+        private Integer queriedServiceId;
 
         FakeEmployeeRepository() {
             super(null);
@@ -87,11 +97,24 @@ class BookingServiceTest {
         }
 
         @Override
+        public List<Employee> findAvailableOnDate(LocalDate date, int weekday, Integer serviceId) {
+            queriedServiceId = serviceId;
+            return findAvailableOnDate(date, weekday);
+        }
+
+        @Override
         public List<Employee> findAvailable(LocalDate date, int weekday, List<String> timePeriods) {
             queriedDate = date;
             queriedWeekday = weekday;
             queriedPeriods = timePeriods;
             return List.of();
+        }
+
+        @Override
+        public List<Employee> findAvailable(LocalDate date, int weekday, List<String> timePeriods,
+                                            Integer serviceId) {
+            queriedServiceId = serviceId;
+            return findAvailable(date, weekday, timePeriods);
         }
 
         @Override

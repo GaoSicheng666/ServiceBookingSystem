@@ -98,6 +98,39 @@ public class EmployeeRepository {
                 employeeId, avatarData, specialty, experience, bio);
     }
 
+    /** 返回护工已经确认可以胜任的服务项目 ID。 */
+    public List<Integer> findServiceCapabilityIds(int employeeId) {
+        return jdbc.queryForList(
+                "SELECT service_id FROM employee_service_capabilities " +
+                        "WHERE employee_id = ? ORDER BY service_id",
+                Integer.class, employeeId);
+    }
+
+    /** 整体替换护工的服务能力；由上层事务保证删除与新增同时成功。 */
+    public void replaceServiceCapabilities(int employeeId, List<Integer> serviceIds) {
+        jdbc.update("DELETE FROM employee_service_capabilities WHERE employee_id = ?", employeeId);
+        for (Integer serviceId : serviceIds) {
+            jdbc.update(
+                    "INSERT INTO employee_service_capabilities (employee_id, service_id) VALUES (?, ?)",
+                    employeeId, serviceId);
+        }
+    }
+
+    public boolean hasServiceCapability(int employeeId, int serviceId) {
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM employee_service_capabilities " +
+                        "WHERE employee_id = ? AND service_id = ?",
+                Integer.class, employeeId, serviceId);
+        return count != null && count > 0;
+    }
+
+    public boolean hasAnyServiceCapability(int employeeId) {
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM employee_service_capabilities WHERE employee_id = ?",
+                Integer.class, employeeId);
+        return count != null && count > 0;
+    }
+
     public List<Employee> findAll() {
         return jdbc.query(EMPLOYEE_SELECT + "ORDER BY e.id", RowMappers.EMPLOYEE);
     }
@@ -107,10 +140,18 @@ public class EmployeeRepository {
      * 没有 appointment_time_slots 的旧预约按全天占用处理，避免旧数据升级后产生重复预约。
      */
     public List<Employee> findAvailableOnDate(LocalDate date, int weekday) {
+        return findAvailableOnDate(date, weekday, null);
+    }
+
+    public List<Employee> findAvailableOnDate(LocalDate date, int weekday, Integer serviceId) {
         String sql =
                 EMPLOYEE_SELECT +
                 "WHERE e.is_working = TRUE AND e.is_active = TRUE " +
                 "AND COALESCE(t.quiz_passed, FALSE) = TRUE " +
+                "AND (? IS NULL OR EXISTS ( " +
+                "  SELECT 1 FROM employee_service_capabilities esc " +
+                "  WHERE esc.employee_id = e.id AND esc.service_id = ? " +
+                ")) " +
                 "AND EXISTS ( " +
                 "  SELECT 1 FROM employee_availability ea " +
                 "  WHERE ea.employee_id = e.id AND ea.weekday = ? " +
@@ -125,7 +166,7 @@ public class EmployeeRepository {
                 "                    AND booked_slot.time_period = ea.time_period)) " +
                 "  ) " +
                 ") ORDER BY e.id";
-        return jdbc.query(sql, RowMappers.EMPLOYEE, weekday, date);
+        return jdbc.query(sql, RowMappers.EMPLOYEE, serviceId, serviceId, weekday, date);
     }
 
     /** 查询某位员工在指定日期仍未被预约的排班时段，并按一天内的先后顺序返回。 */
@@ -157,11 +198,20 @@ public class EmployeeRepository {
      * 员工必须已通过培训、正在接单、当天排班包含全部时段，且这些时段没有未取消预约。
      */
     public List<Employee> findAvailable(LocalDate date, int weekday, List<String> timePeriods) {
+        return findAvailable(date, weekday, timePeriods, null);
+    }
+
+    public List<Employee> findAvailable(LocalDate date, int weekday, List<String> timePeriods,
+                                        Integer serviceId) {
         String placeholders = String.join(",", Collections.nCopies(timePeriods.size(), "?"));
         String sql =
                 EMPLOYEE_SELECT +
                 "WHERE e.is_working = TRUE AND e.is_active = TRUE " +
                 "AND COALESCE(t.quiz_passed, FALSE) = TRUE " +
+                "AND (? IS NULL OR EXISTS ( " +
+                "  SELECT 1 FROM employee_service_capabilities esc " +
+                "  WHERE esc.employee_id = e.id AND esc.service_id = ? " +
+                ")) " +
                 "AND (SELECT COUNT(DISTINCT ea.time_period) FROM employee_availability ea " +
                 "     WHERE ea.employee_id = e.id AND ea.weekday = ? " +
                 "     AND ea.time_period IN (" + placeholders + ")) = ? " +
@@ -175,6 +225,8 @@ public class EmployeeRepository {
                 ") ORDER BY e.id";
 
         List<Object> args = new ArrayList<>();
+        args.add(serviceId);
+        args.add(serviceId);
         args.add(weekday);
         args.addAll(timePeriods);
         args.add(timePeriods.size());

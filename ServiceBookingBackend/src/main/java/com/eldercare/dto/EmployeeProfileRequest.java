@@ -7,6 +7,8 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
+import java.util.List;
+
 /** 护工修改本人公开资料的请求。 */
 public class EmployeeProfileRequest {
 
@@ -26,6 +28,10 @@ public class EmployeeProfileRequest {
     @Size(max = 100, message = "擅长服务不能超过100个字")
     private String specialty;
 
+    /** 管理员服务项目中由护工确认可以胜任的项目 ID。null 兼容旧客户端。 */
+    @Size(max = 100, message = "可胜任服务项目数量过多")
+    private List<Integer> serviceIds;
+
     @Size(max = 200, message = "从业经历不能超过200个字")
     private String experience;
 
@@ -44,6 +50,8 @@ public class EmployeeProfileRequest {
     public void setPhone(String phone) { this.phone = phone; }
     public String getSpecialty() { return specialty; }
     public void setSpecialty(String specialty) { this.specialty = specialty; }
+    public List<Integer> getServiceIds() { return serviceIds; }
+    public void setServiceIds(List<Integer> serviceIds) { this.serviceIds = serviceIds; }
     public String getExperience() { return experience; }
     public void setExperience(String experience) { this.experience = experience; }
     public String getBio() { return bio; }

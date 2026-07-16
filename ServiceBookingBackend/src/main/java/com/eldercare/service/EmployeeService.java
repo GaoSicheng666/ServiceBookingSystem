@@ -5,15 +5,19 @@ import com.eldercare.dto.AvailabilityRequest;
 import com.eldercare.dto.EmployeeProfileRequest;
 import com.eldercare.dto.TrainingQuizRequest;
 import com.eldercare.entity.Employee;
+import com.eldercare.entity.ServiceItem;
 import com.eldercare.repository.EmployeeRepository;
 import com.eldercare.repository.EmployeeTrainingRepository;
+import com.eldercare.repository.ServiceRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.regex.Pattern;
 
 /** 护工自助服务：培训、答题、可工作时段、资料和接单状态。 */
@@ -31,11 +35,14 @@ public class EmployeeService {
 
     private final EmployeeRepository employeeRepo;
     private final EmployeeTrainingRepository trainingRepo;
+    private final ServiceRepository serviceRepo;
 
     public EmployeeService(EmployeeRepository employeeRepo,
-                           EmployeeTrainingRepository trainingRepo) {
+                           EmployeeTrainingRepository trainingRepo,
+                           ServiceRepository serviceRepo) {
         this.employeeRepo = employeeRepo;
         this.trainingRepo = trainingRepo;
+        this.serviceRepo = serviceRepo;
     }
 
     public Employee getSelf(String username) {
@@ -105,7 +112,16 @@ public class EmployeeService {
         if (working && !employee.isQuizPassed()) {
             throw new BusinessException("请先完成培训并通过答题");
         }
+        if (working && !employeeRepo.hasAnyServiceCapability(employee.getId())) {
+            throw new BusinessException("请先在个人信息中选择至少一项可胜任服务");
+        }
         employeeRepo.updateWorkingStatus(username, working);
+    }
+
+    /** 当前护工已经选择的管理员服务项目 ID。 */
+    public List<Integer> getServiceCapabilities(String username) {
+        Employee employee = requireEmployee(username);
+        return employeeRepo.findServiceCapabilityIds(employee.getId());
     }
 
     /** 修改护工本人基本资料和老人端可见的服务介绍。 */
@@ -118,13 +134,45 @@ public class EmployeeService {
             throw new BusinessException("头像格式不正确，请选择 JPG、PNG 或 WebP 图片");
         }
 
+        List<Integer> serviceIds = normalizeServiceIds(request.getServiceIds());
+        String specialty = normalizeOptional(request.getSpecialty());
+        if (serviceIds != null) {
+            List<ServiceItem> activeServices = serviceRepo.findActive();
+            Set<Integer> selectedIds = new LinkedHashSet<>(serviceIds);
+            List<ServiceItem> selectedServices = activeServices.stream()
+                    .filter(item -> selectedIds.contains(item.getId()))
+                    .toList();
+            if (selectedServices.size() != selectedIds.size()) {
+                throw new BusinessException("存在已删除或已下架的服务项目，请重新选择");
+            }
+            specialty = selectedServices.stream()
+                    .map(ServiceItem::getName)
+                    .collect(Collectors.joining("、"));
+            serviceIds = selectedServices.stream().map(ServiceItem::getId).toList();
+        }
+
         employeeRepo.updateProfileBasics(
                 employee.getId(), request.getName().trim(), request.getAge(), request.getPhone().trim());
         employeeRepo.upsertProfile(
                 employee.getId(), avatarData,
-                normalizeOptional(request.getSpecialty()),
+                specialty,
                 normalizeOptional(request.getExperience()),
                 normalizeOptional(request.getBio()));
+        if (serviceIds != null) {
+            employeeRepo.replaceServiceCapabilities(employee.getId(), serviceIds);
+        }
+    }
+
+    private List<Integer> normalizeServiceIds(List<Integer> requested) {
+        if (requested == null) return null;
+        LinkedHashSet<Integer> ids = new LinkedHashSet<>();
+        for (Integer serviceId : requested) {
+            if (serviceId == null || serviceId <= 0) {
+                throw new BusinessException("服务项目选择不正确");
+            }
+            ids.add(serviceId);
+        }
+        return List.copyOf(ids);
     }
 
     private String normalizeOptional(String value) {

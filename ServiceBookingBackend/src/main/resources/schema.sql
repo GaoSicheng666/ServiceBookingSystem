@@ -99,6 +99,16 @@ CREATE TABLE IF NOT EXISTS services (
     CONSTRAINT uk_services_name UNIQUE (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 护工可胜任的服务项目。服务项目由管理员维护，护工只能从当前上架项目中选择。
+CREATE TABLE IF NOT EXISTS employee_service_capabilities (
+    employee_id INT NOT NULL,
+    service_id INT NOT NULL,
+    PRIMARY KEY (employee_id, service_id),
+    CONSTRAINT fk_capability_employee FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
+    CONSTRAINT fk_capability_service FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE,
+    INDEX idx_capability_service (service_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 预约单表:从"一对一绑定"升级为"带日期和项目的预约单"
 CREATE TABLE IF NOT EXISTS appointments (
     id INT PRIMARY KEY AUTO_INCREMENT,
