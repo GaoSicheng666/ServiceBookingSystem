@@ -230,9 +230,12 @@ body {
   padding-right: 54px;
 }
 
-/* Edge 会给 password 输入框附加原生小眼睛；隐藏它，只保留右侧统一的自定义按钮。 */
-.password-control > input::-ms-reveal,
-.password-control > input::-ms-clear {
+/* Edge 会在用户实际输入密码后显示原生小眼睛，必须单独写规则，否则无效伪元素会使整组选择器失效。 */
+input[type="password"]::-ms-reveal {
+  display: none;
+}
+
+input[type="password"]::-ms-clear {
   display: none;
 }
 
