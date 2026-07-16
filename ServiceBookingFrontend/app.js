@@ -1761,6 +1761,8 @@ async function submitEmployeeQuiz(answers) {
     notify(`本次答对 ${result.score} 题，请重新作答`, "error");
   }
   await loadEmployeeDashboard();
+  // 首次通过答题时主区域会立即进入工作页，同时重绘侧栏以显示工作任务和个人信息入口。
+  renderSession();
   renderEmployeeDashboard();
 }
 
