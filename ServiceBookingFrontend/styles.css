@@ -1934,6 +1934,42 @@ tr:last-child td {
   flex: 0 0 auto;
 }
 
+.admin-appointment-bulk-actions {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f6f8f6;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+}
+
+.admin-appointment-bulk-actions span {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.admin-appointment-bulk-actions strong {
+  color: var(--primary);
+  font-size: 17px;
+}
+
+.appointment-select-column {
+  width: 52px;
+  min-width: 52px;
+  text-align: center;
+}
+
+.appointment-select-column input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
 .senior-appointment-card {
   padding: 22px;
   border: 2px solid #d6ddd7;

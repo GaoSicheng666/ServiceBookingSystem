@@ -14,11 +14,11 @@ const TIME_PERIODS = [
 // 所有会持续增长的业务列表统一每页展示 5 条。
 const LIST_PAGE_SIZE = 5;
 const USER_APPOINTMENTS_PAGE_SIZE = LIST_PAGE_SIZE;
-const USER_APPOINTMENTS_REFRESH_INTERVAL = 15000;
+const BACKGROUND_REFRESH_INTERVAL = 15000;
 const ADMIN_APPOINTMENTS_PAGE_SIZE = LIST_PAGE_SIZE;
 const EMPLOYEE_TASKS_PAGE_SIZE = LIST_PAGE_SIZE;
-let userAppointmentsRefreshTimer = null;
-let userAppointmentsRefreshing = false;
+let backgroundRefreshTimer = null;
+let backgroundRefreshRunning = false;
 
 /*
  * 全局状态对象，是这个单页应用的数据中心。
@@ -286,6 +286,10 @@ document.addEventListener("click", async (event) => {
       await deleteAdminAppointment(button.dataset.id);
       return;
     }
+    if (action === "delete-selected-appointments") {
+      await deleteSelectedAdminAppointments();
+      return;
+    }
     if (action === "save-service") {
       await saveService(button.dataset.id);
       return;
@@ -392,6 +396,15 @@ document.addEventListener("change", async (event) => {
     state.adminAppointmentsPage = 1;
     await loadAdminAppointmentsPage();
     renderAdminDashboard();
+  }
+  if (target.id === "adminAppointmentSelectAll") {
+    document.querySelectorAll(".admin-appointment-select").forEach((checkbox) => {
+      checkbox.checked = target.checked;
+    });
+    updateAdminAppointmentSelection();
+  }
+  if (target.matches(".admin-appointment-select")) {
+    updateAdminAppointmentSelection();
   }
 });
 
@@ -839,7 +852,7 @@ async function register(body) {
  * 这里只清理当前浏览器中的 JWT，不会删除后端账号、业务数据或浏览器密码管理器中的信息。
  */
 function logout(message = "已退出登录") {
-  stopUserAppointmentsAutoRefresh();
+  stopBackgroundAutoRefresh();
   state.token = "";
   state.role = "";
   state.name = "";
@@ -883,6 +896,7 @@ function clearStoredSession() {
  */
 async function refreshDashboard() {
   if (!state.token) {
+    stopBackgroundAutoRefresh();
     render();
     return;
   }
@@ -893,6 +907,153 @@ async function refreshDashboard() {
   if (state.role === "USER") renderUserDashboard();
   if (state.role === "EMPLOYEE") renderEmployeeDashboard();
   if (state.role === "ADMIN") renderAdminDashboard();
+  startBackgroundAutoRefresh();
+}
+
+/**
+ * 登录后只保留一个后台定时器。定时器本身不生成任何界面元素，页面隐藏时也不发送请求。
+ */
+function startBackgroundAutoRefresh() {
+  if (backgroundRefreshTimer || !state.token) return;
+  backgroundRefreshTimer = window.setInterval(() => {
+    if (document.hidden || !state.token) return;
+    refreshCurrentViewSilently();
+  }, BACKGROUND_REFRESH_INTERVAL);
+}
+
+/** 退出登录时释放后台刷新定时器，避免旧会话继续发送请求。 */
+function stopBackgroundAutoRefresh() {
+  if (!backgroundRefreshTimer) return;
+  window.clearInterval(backgroundRefreshTimer);
+  backgroundRefreshTimer = null;
+}
+
+/**
+ * 根据当前角色和页面刷新真正会变化的数据。失败时保留现有内容，不弹出提示，也不打断操作。
+ */
+async function refreshCurrentViewSilently() {
+  if (backgroundRefreshRunning || !state.token || document.hidden) return;
+  backgroundRefreshRunning = true;
+  try {
+    if (state.role === "USER") await refreshUserViewSilently();
+    if (state.role === "EMPLOYEE") await refreshEmployeeViewSilently();
+    if (state.role === "ADMIN") await refreshAdminViewSilently();
+  } catch (_) {
+    // 后台刷新失败时等待下一个周期，当前页面和用户输入保持不变。
+  } finally {
+    backgroundRefreshRunning = false;
+  }
+}
+
+/** 老人端只刷新当前正在查看的动态数据，不刷新静态日期页和最终确认页。 */
+async function refreshUserViewSilently() {
+  const view = state.userView;
+  const step = state.bookingStep;
+
+  if (view === "home") {
+    const pageData = await api(userAppointmentsPageUrl(true));
+    if (state.role !== "USER" || state.userView !== view) return;
+    applyUserAppointmentPage(pageData);
+    renderUserDashboard();
+    return;
+  }
+
+  if (view === "appointments") {
+    const page = state.userAppointmentsPage;
+    const filter = state.appointmentsFilter;
+    const pageData = await api(userAppointmentsPageUrl(false));
+    if (state.role !== "USER" || state.userView !== view || state.userAppointmentsPage !== page || state.appointmentsFilter !== filter) return;
+    applyUserAppointmentPage(pageData);
+    renderUserDashboard();
+    return;
+  }
+
+  if (view !== "booking") return;
+  if (step === 1) {
+    const page = state.userServicesPage;
+    const pageData = await api(userServicesPageUrl());
+    if (state.role !== "USER" || state.userView !== view || state.bookingStep !== step || state.userServicesPage !== page) return;
+    applyUserServicePage(pageData);
+    renderUserDashboard();
+    return;
+  }
+
+  if (step === 3) {
+    const serviceId = String(state.selectedServiceId);
+    const date = state.selectedDate;
+    const page = state.availableEmployeesPage;
+    const pageData = normalizePageData(await api(availableEmployeesPageUrl()), LIST_PAGE_SIZE);
+    if (state.role !== "USER" || state.userView !== view || state.bookingStep !== step
+      || String(state.selectedServiceId) !== serviceId || state.selectedDate !== date || state.availableEmployeesPage !== page) return;
+    applyAvailableEmployeePage(pageData);
+    if (state.selectedEmployeeId && !pageData.items.some((employee) => String(employee.id) === String(state.selectedEmployeeId))) {
+      state.selectedEmployeeId = "";
+      state.data.selectedEmployee = null;
+    }
+    renderUserDashboard();
+    return;
+  }
+
+  if (step === 4 && state.selectedEmployeeId && state.selectedDate) {
+    const employeeId = String(state.selectedEmployeeId);
+    const date = state.selectedDate;
+    const params = new URLSearchParams({ date });
+    const periods = await api(`/employees/${Number(employeeId)}/available-time-periods?${params.toString()}`);
+    if (state.role !== "USER" || state.userView !== view || state.bookingStep !== step
+      || String(state.selectedEmployeeId) !== employeeId || state.selectedDate !== date) return;
+    const availablePeriods = Array.isArray(periods) ? periods : [];
+    state.data.selectedEmployeeAvailablePeriods = availablePeriods;
+    state.selectedTimePeriods = state.selectedTimePeriods.filter((period) => availablePeriods.includes(period));
+    renderUserDashboard();
+  }
+}
+
+/** 返回护工工作页当前勾选内容，用于判断定时刷新是否会覆盖未保存修改。 */
+function employeeWorkFormSnapshot() {
+  const scheduleForm = document.querySelector('form[data-submit="employee-schedule"]');
+  const capabilityForm = document.querySelector('form[data-submit="employee-capabilities"]');
+  const readValues = (form, selector) => form
+    ? Array.from(form.querySelectorAll(selector)).map((input) => String(input.value)).sort()
+    : [];
+  return {
+    schedule: readValues(scheduleForm, 'input[name="slot"]:checked'),
+    capabilities: readValues(capabilityForm, 'input[name="serviceId"]:checked')
+  };
+}
+
+/** 护工尚未保存排班或可胜任服务时暂停刷新，防止勾选内容被覆盖。 */
+function hasUnsavedEmployeeWorkSettings() {
+  const snapshot = employeeWorkFormSnapshot();
+  const savedSchedule = (state.data.employeeAvailability || []).map(String).sort();
+  const savedCapabilities = (state.data.employeeCapabilities || [])
+    .map((item) => String(item && typeof item === "object" ? item.id : item))
+    .sort();
+  return snapshot.schedule.join("|") !== savedSchedule.join("|")
+    || snapshot.capabilities.join("|") !== savedCapabilities.join("|");
+}
+
+/** 护工工作页刷新任务、收入和接单状态；培训、答题、资料编辑和弹窗期间不刷新。 */
+async function refreshEmployeeViewSilently() {
+  if (state.employeeView !== "tasks" || !state.data.employee?.quizPassed) return;
+  if (document.querySelector("#employeeCancelDialog[open]") || hasUnsavedEmployeeWorkSettings()) return;
+  const view = state.employeeView;
+  await loadEmployeeDashboard();
+  if (state.role !== "EMPLOYEE" || state.employeeView !== view || hasUnsavedEmployeeWorkSettings()) return;
+  renderSession();
+  renderEmployeeDashboard();
+}
+
+/** 管理员只在预约总览静默刷新；已勾选记录时暂停，保留批量删除选择。 */
+async function refreshAdminViewSilently() {
+  if (state.activeAdminTab !== "appointments" || document.querySelector(".admin-appointment-select:checked")) return;
+  const page = state.adminAppointmentsPage;
+  const filter = state.appointmentsFilter;
+  const pageData = await api(adminAppointmentsPageUrl());
+  if (state.role !== "ADMIN" || state.activeAdminTab !== "appointments"
+    || state.adminAppointmentsPage !== page || state.appointmentsFilter !== filter
+    || document.querySelector(".admin-appointment-select:checked")) return;
+  applyAdminAppointmentPage(pageData);
+  renderAdminDashboard();
 }
 
 /* ==================== 老人用户端 ====================
@@ -935,16 +1096,9 @@ async function loadUserServicePage() {
  * 手动刷新失败时把错误交给统一提示处理；自动刷新失败则保留当前列表，等待下次重试。
  */
 async function refreshUserAppointments() {
-  if (userAppointmentsRefreshing || !state.token || state.role !== "USER" || state.userView !== "appointments") return;
-  userAppointmentsRefreshing = true;
-  try {
-    applyUserAppointmentPage(await api(userAppointmentsPageUrl(false)));
-    renderUserDashboard();
-  } catch (_) {
-    // 静默刷新失败时保留当前页面，等待下一个刷新周期。
-  } finally {
-    userAppointmentsRefreshing = false;
-  }
+  if (!state.token || state.role !== "USER" || state.userView !== "appointments") return;
+  applyUserAppointmentPage(await api(userAppointmentsPageUrl(false)));
+  renderUserDashboard();
 }
 
 /** 老人首页只查询待服务数量；预约列表按当前状态和页码查询 5 条。 */
@@ -968,31 +1122,18 @@ function applyUserAppointmentPage(pageData) {
   state.userAppointmentsPage = Number(normalized.page || 1);
 }
 
-/** 进入“我的预约”后启动唯一的自动刷新定时器。 */
-function startUserAppointmentsAutoRefresh() {
-  if (userAppointmentsRefreshTimer || !state.token || state.role !== "USER" || state.userView !== "appointments") return;
-  userAppointmentsRefreshTimer = window.setInterval(() => {
-    if (document.hidden) return;
-    if (!state.token || state.role !== "USER" || state.userView !== "appointments") {
-      stopUserAppointmentsAutoRefresh();
-      return;
-    }
-    refreshUserAppointments();
-  }, USER_APPOINTMENTS_REFRESH_INTERVAL);
-}
-
-/** 离开预约记录页或退出登录时释放定时器。 */
-function stopUserAppointmentsAutoRefresh() {
-  if (!userAppointmentsRefreshTimer) return;
-  window.clearInterval(userAppointmentsRefreshTimer);
-  userAppointmentsRefreshTimer = null;
-}
-
 /**
  * 根据已选日期查询当天至少还有一个空闲时段的护工。
  * @param {boolean} showMessage 是否在查询完成后显示成功提示。
  */
 async function loadAvailableEmployees(showMessage = true) {
+  const pageData = normalizePageData(await api(availableEmployeesPageUrl()), LIST_PAGE_SIZE);
+  applyAvailableEmployeePage(pageData);
+  if (showMessage) notify("当天可预约的服务人员已更新", "success");
+}
+
+/** 生成当前服务、日期和页码对应的可预约护工查询地址。 */
+function availableEmployeesPageUrl() {
   const date = state.selectedDate || today();
   if (!state.selectedServiceId) throw new Error("请先选择服务项目");
   const params = new URLSearchParams({
@@ -1001,14 +1142,14 @@ async function loadAvailableEmployees(showMessage = true) {
     page: String(state.availableEmployeesPage),
     size: String(LIST_PAGE_SIZE)
   });
-  const pageData = normalizePageData(
-    await api(`/employees/available/page?${params.toString()}`),
-    LIST_PAGE_SIZE
-  );
+  return `/employees/available/page?${params.toString()}`;
+}
+
+/** 保存可预约护工分页结果，并同步后端校正后的当前页。 */
+function applyAvailableEmployeePage(pageData) {
   state.data.availableEmployeePage = pageData;
   state.data.availableEmployees = pageData.items;
   state.availableEmployeesPage = pageData.page;
-  if (showMessage) notify("当天可预约的服务人员已更新", "success");
 }
 
 /** 选定护工后读取其在指定日期仍可预约的具体时段。 */
@@ -1033,15 +1174,12 @@ function renderUserDashboard() {
   el.viewTitle.textContent = `您好，${user.name || state.name || "欢迎使用"}`;
   el.viewActions.innerHTML = "";
 
-  if (state.userView !== "appointments") stopUserAppointmentsAutoRefresh();
-
   if (state.userView === "booking") {
     el.content.innerHTML = renderBookingWizard(services, employees);
     return;
   }
   if (state.userView === "appointments") {
     el.content.innerHTML = renderUserAppointments(appointments);
-    startUserAppointmentsAutoRefresh();
     return;
   }
 
@@ -2583,12 +2721,17 @@ function adminAppointmentsPanel() {
       <div class="admin-appointments-toolbar">
         <div>
           <h3 class="section-title">全部预约</h3>
-          <p>共 <strong>${Number(pageData.total || 0)}</strong> 条记录，系统最多保留 ${Number(pageData.maxTotal || 9999)} 条，每页 ${Number(pageData.size || ADMIN_APPOINTMENTS_PAGE_SIZE)} 条</p>
+          <p>共 <strong>${Number(pageData.total || 0)}</strong> 条记录，最多保留 ${Number(pageData.maxTotal || 9999)} 条；达到上限后自动删除最早记录。每页 ${Number(pageData.size || ADMIN_APPOINTMENTS_PAGE_SIZE)} 条</p>
         </div>
         <select id="adminStatusFilter">
           ${statusOptions()}
         </select>
       </div>
+      ${appointments.length ? `
+        <div class="admin-appointment-bulk-actions">
+          <span>已选择 <strong data-admin-selection-count>0</strong> 条当前页记录</span>
+          <button class="btn danger" type="button" data-action="delete-selected-appointments" disabled>删除选中记录</button>
+        </div>` : ""}
       ${appointmentsTable(appointments, "admin")}
       ${renderAdminAppointmentsPagination(pageData)}
     </section>
@@ -2636,6 +2779,37 @@ async function deleteAdminAppointment(id) {
   if (!confirm(`确定永久删除预约 #${id} 吗？\n关联的服务时段、金额和取消原因也会删除，此操作无法恢复。`)) return;
   await api(`/admin/appointments/${id}`, { method: "DELETE" });
   notify("预约记录已删除", "success");
+  await loadAdminAppointmentsPage();
+  renderAdminDashboard();
+}
+
+/** 根据当前页复选框同步全选状态、已选数量和批量删除按钮。 */
+function updateAdminAppointmentSelection() {
+  const checkboxes = Array.from(document.querySelectorAll(".admin-appointment-select"));
+  const selectedCount = checkboxes.filter((checkbox) => checkbox.checked).length;
+  const selectAll = document.getElementById("adminAppointmentSelectAll");
+  if (selectAll) {
+    selectAll.checked = checkboxes.length > 0 && selectedCount === checkboxes.length;
+    selectAll.indeterminate = selectedCount > 0 && selectedCount < checkboxes.length;
+  }
+  const counter = document.querySelector("[data-admin-selection-count]");
+  if (counter) counter.textContent = String(selectedCount);
+  const deleteButton = document.querySelector('[data-action="delete-selected-appointments"]');
+  if (deleteButton) deleteButton.disabled = selectedCount === 0;
+}
+
+/** 永久删除管理员在当前页选中的预约记录，并由后端校正删除后的有效页码。 */
+async function deleteSelectedAdminAppointments() {
+  const ids = Array.from(document.querySelectorAll(".admin-appointment-select:checked"))
+    .map((checkbox) => Number(checkbox.value))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  if (!ids.length) throw new Error("请先选择需要删除的预约记录");
+  if (!confirm(`确定永久删除选中的 ${ids.length} 条预约记录吗？\n相关时段、金额和取消原因也会删除，此操作无法恢复。`)) return;
+  const deleted = await api("/admin/appointments/batch", {
+    method: "DELETE",
+    body: { ids }
+  });
+  notify(`已删除 ${Number(deleted || 0)} 条预约记录`, "success");
   await loadAdminAppointmentsPage();
   renderAdminDashboard();
 }
@@ -2733,17 +2907,20 @@ async function deleteEmployee(id) {
  */
 function appointmentsTable(appointments, mode) {
   if (!appointments.length) return `<div class="empty">暂无预约记录。</div>`;
+  const selectable = mode === "admin";
   return `
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
+            ${selectable ? `<th class="appointment-select-column"><input id="adminAppointmentSelectAll" type="checkbox" aria-label="选择当前页全部预约"></th>` : ""}
             <th>日期与时段</th><th>服务与金额</th><th>老人</th><th>员工</th><th>状态</th><th>操作</th>
           </tr>
         </thead>
         <tbody>
           ${appointments.map((item) => `
             <tr>
+              ${selectable ? `<td class="appointment-select-column"><input class="admin-appointment-select" type="checkbox" value="${Number(item.id)}" aria-label="选择预约 ${Number(item.id)}"></td>` : ""}
               <td>${escapeHtml(item.appointmentDate)}<br><span class="small muted">${formatTimePeriods(item.timePeriods)}</span></td>
               <td>${escapeHtml(item.serviceName)}<br><span class="small muted">¥${formatMoney(item.totalAmount)}</span></td>
               <td>${escapeHtml(item.userName)}<br><span class="small muted">${escapeHtml(item.userPhone)} ${escapeHtml(item.userAddress)}</span></td>
