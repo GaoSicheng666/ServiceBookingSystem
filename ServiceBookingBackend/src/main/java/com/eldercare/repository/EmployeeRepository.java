@@ -103,6 +103,56 @@ public class EmployeeRepository {
     }
 
     /**
+     * 查询指定日期至少还有一个空闲排班时段的员工。
+     * 没有 appointment_time_slots 的旧预约按全天占用处理，避免旧数据升级后产生重复预约。
+     */
+    public List<Employee> findAvailableOnDate(LocalDate date, int weekday) {
+        String sql =
+                EMPLOYEE_SELECT +
+                "WHERE e.is_working = TRUE AND e.is_active = TRUE " +
+                "AND COALESCE(t.quiz_passed, FALSE) = TRUE " +
+                "AND EXISTS ( " +
+                "  SELECT 1 FROM employee_availability ea " +
+                "  WHERE ea.employee_id = e.id AND ea.weekday = ? " +
+                "  AND NOT EXISTS ( " +
+                "    SELECT 1 FROM appointments a " +
+                "    WHERE a.employee_id = e.id AND a.appointment_date = ? " +
+                "    AND a.status <> 'CANCELLED' " +
+                "    AND (NOT EXISTS (SELECT 1 FROM appointment_time_slots old_slot " +
+                "                     WHERE old_slot.appointment_id = a.id) " +
+                "         OR EXISTS (SELECT 1 FROM appointment_time_slots booked_slot " +
+                "                    WHERE booked_slot.appointment_id = a.id " +
+                "                    AND booked_slot.time_period = ea.time_period)) " +
+                "  ) " +
+                ") ORDER BY e.id";
+        return jdbc.query(sql, RowMappers.EMPLOYEE, weekday, date);
+    }
+
+    /** 查询某位员工在指定日期仍未被预约的排班时段，并按一天内的先后顺序返回。 */
+    public List<String> findAvailableTimePeriods(int employeeId, LocalDate date, int weekday) {
+        String sql =
+                "SELECT DISTINCT ea.time_period " +
+                "FROM employee_availability ea " +
+                "JOIN employees e ON e.id = ea.employee_id " +
+                "LEFT JOIN employee_training t ON t.employee_id = e.id " +
+                "WHERE ea.employee_id = ? AND ea.weekday = ? " +
+                "AND e.is_working = TRUE AND e.is_active = TRUE " +
+                "AND COALESCE(t.quiz_passed, FALSE) = TRUE " +
+                "AND NOT EXISTS ( " +
+                "  SELECT 1 FROM appointments a " +
+                "  WHERE a.employee_id = e.id AND a.appointment_date = ? " +
+                "  AND a.status <> 'CANCELLED' " +
+                "  AND (NOT EXISTS (SELECT 1 FROM appointment_time_slots old_slot " +
+                "                   WHERE old_slot.appointment_id = a.id) " +
+                "       OR EXISTS (SELECT 1 FROM appointment_time_slots booked_slot " +
+                "                  WHERE booked_slot.appointment_id = a.id " +
+                "                  AND booked_slot.time_period = ea.time_period)) " +
+                ") " +
+                "ORDER BY FIELD(ea.time_period, 'MORNING', 'NOON', 'AFTERNOON', 'EVENING')";
+        return jdbc.queryForList(sql, String.class, employeeId, weekday, date);
+    }
+
+    /**
      * 查询在指定日期和全部所选时段均可预约的员工。
      * 员工必须已通过培训、正在接单、当天排班包含全部时段，且这些时段没有未取消预约。
      */

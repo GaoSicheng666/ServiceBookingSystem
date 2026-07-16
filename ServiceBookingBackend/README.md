@@ -146,7 +146,8 @@ mvn package -DskipTests
 | 公共 | POST | `/api/auth/login` | 登录,返回 token/role/name |
 | 用户 | GET | `/api/users/me` | 我的信息 |
 | 用户 | GET | `/api/services` | 服务项目列表 |
-| 用户 | GET | `/api/employees/available?date=2026-07-15&timePeriod=MORNING&timePeriod=AFTERNOON` | 查询日期及全部所选时段均可预约的员工 |
+| 用户 | GET | `/api/employees/available?date=2026-07-15` | 查询当天至少还有一个空闲时段的员工 |
+| 用户 | GET | `/api/employees/{id}/available-time-periods?date=2026-07-15` | 查询选定员工当天剩余可预约时段 |
 | 用户 | POST | `/api/appointments` | 下预约单，提交日期和一个或多个时段 |
 | 用户 | GET | `/api/appointments/me?status=` | 我的预约+历史 |
 | 用户 | PATCH | `/api/appointments/{id}/cancel` | 取消预约 |
@@ -218,9 +219,11 @@ curl -X PATCH http://localhost:8080/api/employees/me/status \
   -d '{"isWorking":true}'
 ```
 
-**6. 老人查可预约员工并下单**(用老人 token)
+**6. 老人先按日期查员工，再查询选定员工的剩余时段并下单**(用老人 token)
 ```bash
-curl "http://localhost:8080/api/employees/available?date=2026-07-15&timePeriod=MORNING&timePeriod=AFTERNOON" -H "Authorization: Bearer <老人token>"
+curl "http://localhost:8080/api/employees/available?date=2026-07-15" -H "Authorization: Bearer <老人token>"
+
+curl "http://localhost:8080/api/employees/1/available-time-periods?date=2026-07-15" -H "Authorization: Bearer <老人token>"
 
 curl -X POST http://localhost:8080/api/appointments \
   -H "Authorization: Bearer <老人token>" \
@@ -248,7 +251,7 @@ curl -X PATCH http://localhost:8080/api/employees/me/appointments/1/cancel \
 - **三角色统一登录**:登录接口依次匹配 用户→员工→管理员;修复了原 JavaFX 版登录时"空值未 return"的逻辑缺陷。
 - **密码安全**:沿用原项目 PBKDF2(12 万次迭代 + 随机盐);种子/旧明文密码在首次登录时自动升级为哈希。
 - **防并发重复预约**:下单在事务中用 `SELECT ... FOR UPDATE` 行锁，保证同一员工或同一老人不会在同一天的同一时段重复预约；不同且不重叠的时段可以分别预约。
-- **预约增强**:老人先选日期，再从四个时段中任意多选，只有全部所选时段均有排班且空闲的护工才会显示。预约单含服务、日期、时段和状态，支持历史查询。
+- **预约增强**:老人先选日期，系统列出当天至少还有一个空闲时段的护工；选定护工后再显示其当天剩余时段供老人多选。预约单含服务、日期、时段和状态，提交时会再次校验排班及冲突。
 - **金额快照**:下单总额等于服务参考单价乘所选时段数，单价和总额保存在 `appointment_billing`，管理员日后改价不会影响历史订单；护工累计收入只汇总已完成订单。
 - **取消原因留痕**:护工取消预约时必须选择预设原因或填写其他原因，发起方和原因保存在 `appointment_cancellations`，老人、护工和管理员都能查看。
 - **岗前准入**:护工需完成学习并在 4 道题中答对至少 3 道；未通过者不能接单，也不会出现在可预约列表中。

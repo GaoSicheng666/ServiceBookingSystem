@@ -44,17 +44,42 @@ public class BookingService {
         return serviceRepo.findActive();
     }
 
-    /** 查询在指定日期和全部所选时段均可预约的员工。 */
+    /**
+     * 查询指定日期可预约的员工。
+     * 未指定时段时返回当天至少还有一个空闲时段的员工；旧客户端传入时段时保留原筛选方式。
+     */
     public List<Employee> availableEmployees(LocalDate date, List<String> timePeriods) {
-        if (date == null) {
-            date = LocalDate.now();
-        }
-        if (date.isBefore(LocalDate.now())) {
-            throw new BusinessException(2005, "不能查询过去日期的可预约员工");
+        date = validateQueryDate(date);
+        if (timePeriods == null || timePeriods.isEmpty()) {
+            return employeeRepo.findAvailableOnDate(date, date.getDayOfWeek().getValue());
         }
         List<String> normalizedPeriods = normalizeTimePeriods(timePeriods);
         return employeeRepo.findAvailable(
                 date, date.getDayOfWeek().getValue(), normalizedPeriods);
+    }
+
+    /** 查询指定员工在某天仍可被老人选择的具体时段。 */
+    public List<String> availableTimePeriodsForEmployee(int employeeId, LocalDate date) {
+        LocalDate queryDate = validateQueryDate(date);
+        Employee employee = employeeRepo.findById(employeeId)
+                .orElseThrow(() -> new BusinessException(2002, "员工不存在或已停用"));
+        if (!employee.isActive()) {
+            throw new BusinessException(2002, "员工不存在或已停用");
+        }
+        if (!employee.isWorking() || !employee.isQuizPassed()) {
+            throw new BusinessException(2003, "该员工当前不可预约");
+        }
+        return employeeRepo.findAvailableTimePeriods(
+                employeeId, queryDate, queryDate.getDayOfWeek().getValue());
+    }
+
+    /** 统一处理可预约查询日期，未传日期时默认今天。 */
+    private LocalDate validateQueryDate(LocalDate date) {
+        LocalDate queryDate = date == null ? LocalDate.now() : date;
+        if (queryDate.isBefore(LocalDate.now())) {
+            throw new BusinessException(2005, "不能查询过去日期的可预约员工");
+        }
+        return queryDate;
     }
 
     /**

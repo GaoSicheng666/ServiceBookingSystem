@@ -34,7 +34,10 @@ public class UserController {
         return ApiResponse.ok(userService.getSelf(CurrentUser.username()));
     }
 
-    /** 指定日期及一个或多个时段均可预约的员工。 */
+    /**
+     * 指定日期可预约的员工。
+     * 不传 timePeriod 时返回当天至少还有一个空闲时段的员工；传入时保留旧版精确筛选能力。
+     */
     @GetMapping("/employees/available")
     public ApiResponse<List<Employee>> availableEmployees(
             @RequestParam(required = false)
@@ -43,6 +46,15 @@ public class UserController {
         List<Employee> list = bookingService.availableEmployees(date, timePeriods);
         list.forEach(e -> e.setPassword(null));
         return ApiResponse.ok(list);
+    }
+
+    /** 选定员工后，查询该员工在指定日期仍可预约的具体时段。 */
+    @GetMapping("/employees/{id}/available-time-periods")
+    public ApiResponse<List<String>> availableTimePeriods(
+            @PathVariable int id,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return ApiResponse.ok(bookingService.availableTimePeriodsForEmployee(id, date));
     }
 
     /** 下预约单。 */
