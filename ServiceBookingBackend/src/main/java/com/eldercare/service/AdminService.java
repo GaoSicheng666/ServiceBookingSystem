@@ -17,7 +17,7 @@ import java.util.List;
 public class AdminService {
 
     public static final int APPOINTMENT_RECORD_LIMIT = 9999;
-    public static final int DEFAULT_APPOINTMENT_PAGE_SIZE = 10;
+    public static final int DEFAULT_PAGE_SIZE = 5;
     public static final int MAX_APPOINTMENT_PAGE_SIZE = 50;
 
     private final ServiceRepository serviceRepo;
@@ -39,6 +39,15 @@ public class AdminService {
     // ---- 服务项目 ----
     public List<ServiceItem> listServices() {
         return serviceRepo.findAll();
+    }
+
+    public PageResult<ServiceItem> pageServices(int requestedPage, int requestedSize) {
+        validatePageSize(requestedSize);
+        long total = serviceRepo.count();
+        int page = clampPage(total, requestedPage, requestedSize);
+        return new PageResult<>(
+                serviceRepo.findPage(requestedSize, (page - 1) * requestedSize),
+                page, requestedSize, total);
     }
 
     public void createService(ServiceItem s) {
@@ -65,6 +74,15 @@ public class AdminService {
         return users;
     }
 
+    public PageResult<User> pageUsers(int requestedPage, int requestedSize) {
+        validatePageSize(requestedSize);
+        long total = userRepo.count();
+        int page = clampPage(total, requestedPage, requestedSize);
+        List<User> users = userRepo.findPage(requestedSize, (page - 1) * requestedSize);
+        users.forEach(user -> user.setPassword(null));
+        return new PageResult<>(users, page, requestedSize, total);
+    }
+
     public void setUserActive(int id, boolean active) {
         userRepo.setActive(id, active);
     }
@@ -78,6 +96,16 @@ public class AdminService {
         List<Employee> employees = employeeRepo.findAll();
         employees.forEach(e -> e.setPassword(null));
         return employees;
+    }
+
+    public PageResult<Employee> pageEmployees(int requestedPage, int requestedSize) {
+        validatePageSize(requestedSize);
+        long total = employeeRepo.count();
+        int page = clampPage(total, requestedPage, requestedSize);
+        List<Employee> employees = employeeRepo.findPage(
+                requestedSize, (page - 1) * requestedSize);
+        employees.forEach(employee -> employee.setPassword(null));
+        return new PageResult<>(employees, page, requestedSize, total);
     }
 
     public void setEmployeeActive(int id, boolean active) {
@@ -101,15 +129,23 @@ public class AdminService {
 
     /** 后端分页，防止管理员一次加载全部历史预约。 */
     public PageResult<Appointment> pageAppointments(String status, int requestedPage, int requestedSize) {
-        if (requestedSize < 1 || requestedSize > MAX_APPOINTMENT_PAGE_SIZE) {
-            throw new BusinessException("每页记录数必须在1至50之间");
-        }
+        validatePageSize(requestedSize);
         long total = appointmentRepo.count(status);
-        int totalPages = Math.max(1, (int) Math.ceil((double) total / requestedSize));
-        int page = Math.min(Math.max(1, requestedPage), totalPages);
+        int page = clampPage(total, requestedPage, requestedSize);
         int offset = (page - 1) * requestedSize;
         List<Appointment> items = appointmentRepo.findPage(status, requestedSize, offset);
         return new PageResult<>(items, page, requestedSize, total, APPOINTMENT_RECORD_LIMIT);
+    }
+
+    private void validatePageSize(int requestedSize) {
+        if (requestedSize < 1 || requestedSize > MAX_APPOINTMENT_PAGE_SIZE) {
+            throw new BusinessException("每页记录数必须在1至50之间");
+        }
+    }
+
+    private int clampPage(long total, int requestedPage, int requestedSize) {
+        int totalPages = Math.max(1, (int) Math.ceil((double) total / requestedSize));
+        return Math.min(Math.max(1, requestedPage), totalPages);
     }
 
     /** 管理员永久删除预约；数据库外键负责级联清理预约附属记录。 */

@@ -3,7 +3,9 @@ package com.eldercare.service;
 import com.eldercare.common.BusinessException;
 import com.eldercare.dto.PageResult;
 import com.eldercare.entity.Appointment;
+import com.eldercare.entity.ServiceItem;
 import com.eldercare.repository.AppointmentRepository;
+import com.eldercare.repository.ServiceRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -41,6 +43,25 @@ class AdminServiceTest {
     @Test
     void pageSizeCannotExceedBackendLimit() {
         assertThrows(BusinessException.class, () -> adminService.pageAppointments(null, 1, 51));
+    }
+
+    @Test
+    void servicePageClampsPageAndUsesFiveRowOffset() {
+        FakeServiceRepository serviceRepo = new FakeServiceRepository();
+        ServiceItem serviceItem = new ServiceItem();
+        serviceItem.setId(12);
+        serviceRepo.total = 12;
+        serviceRepo.pageItems = List.of(serviceItem);
+        AdminService service = new AdminService(
+                serviceRepo, null, null, null, appointmentRepo);
+
+        PageResult<ServiceItem> result = service.pageServices(99, 5);
+
+        assertEquals(3, result.getPage());
+        assertEquals(3, result.getTotalPages());
+        assertEquals(12, result.getTotal());
+        assertEquals(5, serviceRepo.requestedLimit);
+        assertEquals(10, serviceRepo.requestedOffset);
     }
 
     @Test
@@ -82,6 +103,29 @@ class AdminServiceTest {
         @Override
         public int deleteById(int id) {
             return deleteResult;
+        }
+    }
+
+    private static class FakeServiceRepository extends ServiceRepository {
+        private long total;
+        private List<ServiceItem> pageItems = List.of();
+        private int requestedLimit;
+        private int requestedOffset;
+
+        FakeServiceRepository() {
+            super(null);
+        }
+
+        @Override
+        public long count() {
+            return total;
+        }
+
+        @Override
+        public List<ServiceItem> findPage(int limit, int offset) {
+            requestedLimit = limit;
+            requestedOffset = offset;
+            return pageItems;
         }
     }
 }

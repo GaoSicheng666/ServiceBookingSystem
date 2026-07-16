@@ -12,6 +12,10 @@ public class PageResult<T> {
     private final int totalPages;
     private final int maxTotal;
 
+    public PageResult(List<T> items, int page, int size, long total) {
+        this(items, page, size, total, 0);
+    }
+
     public PageResult(List<T> items, int page, int size, long total, int maxTotal) {
         this.items = items == null ? List.of() : List.copyOf(items);
         this.page = page;

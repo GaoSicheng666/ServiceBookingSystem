@@ -8,6 +8,7 @@ import com.eldercare.dto.CancelAppointmentRequest;
 import com.eldercare.dto.EmployeeProfileRequest;
 import com.eldercare.dto.ServiceCapabilityRequest;
 import com.eldercare.dto.TrainingQuizRequest;
+import com.eldercare.dto.PageResult;
 import com.eldercare.service.BookingService;
 import com.eldercare.service.EmployeeService;
 import com.eldercare.security.CurrentUser;
@@ -98,6 +99,22 @@ public class EmployeeController {
     @GetMapping("/me/appointments")
     public ApiResponse<List<Appointment>> myAppointments(@RequestParam(required = false) String status) {
         return ApiResponse.ok(bookingService.myAppointmentsAsEmployee(CurrentUser.username(), status));
+    }
+
+    /** 护工任务分页，前端默认每页展示 5 条。 */
+    @GetMapping("/me/appointments/page")
+    public ApiResponse<PageResult<Appointment>> myAppointmentPage(
+            @RequestParam(required = false) String status,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "5") int size) {
+        return ApiResponse.ok(bookingService.myAppointmentsAsEmployeePage(
+                CurrentUser.username(), status, page, size));
+    }
+
+    /** 护工工作页顶部概况和下一项任务。 */
+    @GetMapping("/me/appointments/summary")
+    public ApiResponse<Map<String, Object>> appointmentSummary() {
+        return ApiResponse.ok(bookingService.employeeAppointmentSummary(CurrentUser.username()));
     }
 
     /** 按已完成服务参考价统计当前护工累计收入。 */

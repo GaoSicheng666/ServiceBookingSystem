@@ -31,6 +31,13 @@ public class AdminController {
         return ApiResponse.ok(adminService.listServices());
     }
 
+    @GetMapping("/services/page")
+    public ApiResponse<PageResult<ServiceItem>> pageServices(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "5") int size) {
+        return ApiResponse.ok(adminService.pageServices(page, size));
+    }
+
     @PostMapping("/services")
     public ApiResponse<Void> createService(@RequestBody ServiceItem s) {
         adminService.createService(s);
@@ -55,6 +62,13 @@ public class AdminController {
         return ApiResponse.ok(adminService.listUsers());
     }
 
+    @GetMapping("/users/page")
+    public ApiResponse<PageResult<User>> pageUsers(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "5") int size) {
+        return ApiResponse.ok(adminService.pageUsers(page, size));
+    }
+
     @PatchMapping("/users/{id}/active")
     public ApiResponse<Void> setUserActive(@PathVariable int id, @RequestBody Map<String, Boolean> body) {
         adminService.setUserActive(id, Boolean.TRUE.equals(body.get("active")));
@@ -71,6 +85,13 @@ public class AdminController {
     @GetMapping("/employees")
     public ApiResponse<List<Employee>> listEmployees() {
         return ApiResponse.ok(adminService.listEmployees());
+    }
+
+    @GetMapping("/employees/page")
+    public ApiResponse<PageResult<Employee>> pageEmployees(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "5") int size) {
+        return ApiResponse.ok(adminService.pageEmployees(page, size));
     }
 
     @PatchMapping("/employees/{id}/active")
@@ -98,12 +119,12 @@ public class AdminController {
         return ApiResponse.ok(adminService.listAppointments(status));
     }
 
-    /** 管理员预约分页；单页最多 50 条，前端默认使用 10 条。 */
+    /** 管理员预约分页；单页最多 50 条，前端默认使用 5 条。 */
     @GetMapping("/appointments/page")
     public ApiResponse<PageResult<Appointment>> pageAppointments(
             @RequestParam(required = false) String status,
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "10") int size) {
+            @RequestParam(defaultValue = "5") int size) {
         return ApiResponse.ok(adminService.pageAppointments(status, page, size));
     }
 

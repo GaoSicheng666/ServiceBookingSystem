@@ -18,7 +18,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.math.BigDecimal;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /** 预约业务:下单(事务+行锁防并发)、查询、取消、完成。 */
 @Service
@@ -47,6 +49,16 @@ public class BookingService {
         return serviceRepo.findActive();
     }
 
+    /** 老人选择服务时使用的分页列表。 */
+    public PageResult<ServiceItem> availableServicesPage(int requestedPage, int requestedSize) {
+        validatePageSize(requestedSize);
+        long total = serviceRepo.countActive();
+        int page = clampPage(total, requestedPage, requestedSize);
+        List<ServiceItem> items = serviceRepo.findActivePage(
+                requestedSize, (page - 1) * requestedSize);
+        return new PageResult<>(items, page, requestedSize, total);
+    }
+
     /**
      * 查询指定日期可预约的员工。
      * 未指定时段时返回当天至少还有一个空闲时段的员工；旧客户端传入时段时保留原筛选方式。
@@ -65,6 +77,30 @@ public class BookingService {
         List<String> normalizedPeriods = normalizeTimePeriods(timePeriods);
         return employeeRepo.findAvailable(
                 date, date.getDayOfWeek().getValue(), normalizedPeriods, serviceId);
+    }
+
+    /** 老人选择护工时使用的分页列表；日期查询直接在数据库中执行 LIMIT/OFFSET。 */
+    public PageResult<Employee> availableEmployeesPage(LocalDate date, List<String> timePeriods,
+                                                        Integer serviceId, int requestedPage,
+                                                        int requestedSize) {
+        validatePageSize(requestedSize);
+        LocalDate queryDate = validateQueryDate(date);
+
+        if (timePeriods == null || timePeriods.isEmpty()) {
+            int weekday = queryDate.getDayOfWeek().getValue();
+            long total = employeeRepo.countAvailableOnDate(queryDate, weekday, serviceId);
+            int page = clampPage(total, requestedPage, requestedSize);
+            List<Employee> items = employeeRepo.findAvailableOnDatePage(
+                    queryDate, weekday, serviceId, requestedSize, (page - 1) * requestedSize);
+            return new PageResult<>(items, page, requestedSize, total);
+        }
+
+        // 兼容旧客户端按多个时段筛选的调用方式；新版预约流程只传日期和服务。
+        List<Employee> all = availableEmployees(queryDate, timePeriods, serviceId);
+        int page = clampPage(all.size(), requestedPage, requestedSize);
+        int from = Math.min((page - 1) * requestedSize, all.size());
+        int to = Math.min(from + requestedSize, all.size());
+        return new PageResult<>(all.subList(from, to), page, requestedSize, all.size());
     }
 
     /** 查询指定员工在某天仍可被老人选择的具体时段。 */
@@ -185,14 +221,11 @@ public class BookingService {
     /** 老人预约记录服务端分页，前端固定每页 5 条，接口最大允许 20 条。 */
     public PageResult<Appointment> myAppointmentsAsUserPage(String username, String status,
                                                             int requestedPage, int requestedSize) {
-        if (requestedSize < 1 || requestedSize > 20) {
-            throw new BusinessException("每页预约记录数必须在1至20之间");
-        }
+        validatePageSize(requestedSize);
         User user = userRepo.findByUsername(username)
                 .orElseThrow(() -> new BusinessException("用户不存在"));
         long total = appointmentRepo.countByUserId(user.getId(), status);
-        int totalPages = Math.max(1, (int) Math.ceil((double) total / requestedSize));
-        int page = Math.min(Math.max(1, requestedPage), totalPages);
+        int page = clampPage(total, requestedPage, requestedSize);
         List<Appointment> items = appointmentRepo.findByUserIdPage(
                 user.getId(), status, requestedSize, (page - 1) * requestedSize);
         return new PageResult<>(items, page, requestedSize, total, APPOINTMENT_RECORD_LIMIT);
@@ -203,6 +236,48 @@ public class BookingService {
         Employee emp = employeeRepo.findByUsername(username)
                 .orElseThrow(() -> new BusinessException("员工不存在"));
         return appointmentRepo.findByEmployeeId(emp.getId(), status);
+    }
+
+    /** 护工任务记录分页，前端统一每页展示 5 条。 */
+    public PageResult<Appointment> myAppointmentsAsEmployeePage(String username, String status,
+                                                                 int requestedPage,
+                                                                 int requestedSize) {
+        validatePageSize(requestedSize);
+        Employee employee = employeeRepo.findByUsername(username)
+                .orElseThrow(() -> new BusinessException("员工不存在"));
+        long total = appointmentRepo.countByEmployeeId(employee.getId(), status);
+        int page = clampPage(total, requestedPage, requestedSize);
+        List<Appointment> items = appointmentRepo.findByEmployeeIdPage(
+                employee.getId(), status, requestedSize, (page - 1) * requestedSize);
+        return new PageResult<>(items, page, requestedSize, total, APPOINTMENT_RECORD_LIMIT);
+    }
+
+    /** 护工首页概况独立统计，避免为了三个数字再次加载全部历史任务。 */
+    public Map<String, Object> employeeAppointmentSummary(String username) {
+        Employee employee = employeeRepo.findByUsername(username)
+                .orElseThrow(() -> new BusinessException("员工不存在"));
+        LocalDate today = LocalDate.now();
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("todayTasks", appointmentRepo.countByEmployeeIdAndDate(
+                employee.getId(), null, today));
+        summary.put("pendingTasks", appointmentRepo.countByEmployeeId(
+                employee.getId(), "PENDING"));
+        summary.put("completedToday", appointmentRepo.countByEmployeeIdAndDate(
+                employee.getId(), "COMPLETED", today));
+        summary.put("nextTask", appointmentRepo.findNextPendingByEmployeeId(
+                employee.getId(), today));
+        return summary;
+    }
+
+    private void validatePageSize(int requestedSize) {
+        if (requestedSize < 1 || requestedSize > 20) {
+            throw new BusinessException("每页记录数必须在1至20之间");
+        }
+    }
+
+    private int clampPage(long total, int requestedPage, int requestedSize) {
+        int totalPages = Math.max(1, (int) Math.ceil((double) total / requestedSize));
+        return Math.min(Math.max(1, requestedPage), totalPages);
     }
 
     /** 护工累计服务收入，只统计已经完成的预约。 */

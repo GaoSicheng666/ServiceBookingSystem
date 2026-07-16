@@ -58,6 +58,17 @@ public class UserRepository {
         return jdbc.query("SELECT * FROM users ORDER BY id", RowMappers.USER);
     }
 
+    public List<User> findPage(int limit, int offset) {
+        return jdbc.query(
+                "SELECT * FROM users ORDER BY id LIMIT ? OFFSET ?",
+                RowMappers.USER, limit, offset);
+    }
+
+    public long count() {
+        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM users", Long.class);
+        return count == null ? 0 : count;
+    }
+
     public void setActive(int id, boolean active) {
         jdbc.update("UPDATE users SET is_active = ? WHERE id = ?", active, id);
     }

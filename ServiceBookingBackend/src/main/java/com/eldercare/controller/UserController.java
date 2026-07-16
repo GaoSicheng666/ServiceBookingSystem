@@ -50,6 +50,21 @@ public class UserController {
         return ApiResponse.ok(list);
     }
 
+    /** 指定日期可预约护工分页，前端默认每页展示 5 名。 */
+    @GetMapping("/employees/available/page")
+    public ApiResponse<PageResult<Employee>> availableEmployeePage(
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @RequestParam(name = "timePeriod", required = false) List<String> timePeriods,
+            @RequestParam(required = false) Integer serviceId,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "5") int size) {
+        PageResult<Employee> result = bookingService.availableEmployeesPage(
+                date, timePeriods, serviceId, page, size);
+        result.getItems().forEach(employee -> employee.setPassword(null));
+        return ApiResponse.ok(result);
+    }
+
     /** 选定员工后，查询该员工在指定日期仍可预约的具体时段。 */
     @GetMapping("/employees/{id}/available-time-periods")
     public ApiResponse<List<String>> availableTimePeriods(

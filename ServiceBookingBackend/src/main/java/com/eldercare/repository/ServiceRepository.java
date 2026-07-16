@@ -22,9 +22,32 @@ public class ServiceRepository {
         return jdbc.query("SELECT * FROM services WHERE is_active = TRUE ORDER BY id", RowMappers.SERVICE);
     }
 
+    public List<ServiceItem> findActivePage(int limit, int offset) {
+        return jdbc.query(
+                "SELECT * FROM services WHERE is_active = TRUE ORDER BY id LIMIT ? OFFSET ?",
+                RowMappers.SERVICE, limit, offset);
+    }
+
+    public long countActive() {
+        Long count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM services WHERE is_active = TRUE", Long.class);
+        return count == null ? 0 : count;
+    }
+
     /** 所有服务项目(给管理员看)。 */
     public List<ServiceItem> findAll() {
         return jdbc.query("SELECT * FROM services ORDER BY id", RowMappers.SERVICE);
+    }
+
+    public List<ServiceItem> findPage(int limit, int offset) {
+        return jdbc.query(
+                "SELECT * FROM services ORDER BY id LIMIT ? OFFSET ?",
+                RowMappers.SERVICE, limit, offset);
+    }
+
+    public long count() {
+        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM services", Long.class);
+        return count == null ? 0 : count;
     }
 
     public Optional<ServiceItem> findById(int id) {

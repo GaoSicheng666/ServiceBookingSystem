@@ -79,6 +79,24 @@ class BookingServiceTest {
     }
 
     @Test
+    void availableEmployeePageClampsPageAndUsesFiveRowOffset() {
+        LocalDate date = LocalDate.now().plusDays(2);
+        Employee employee = availableEmployee(16);
+        employeeRepo.availableEmployeeTotal = 12;
+        employeeRepo.availableEmployeePage = List.of(employee);
+
+        PageResult<Employee> result = bookingService.availableEmployeesPage(
+                date, null, 5, 99, 5);
+
+        assertEquals(3, result.getPage());
+        assertEquals(3, result.getTotalPages());
+        assertEquals(12, result.getTotal());
+        assertEquals(List.of(employee), result.getItems());
+        assertEquals(5, employeeRepo.queriedLimit);
+        assertEquals(10, employeeRepo.queriedOffset);
+    }
+
+    @Test
     void bookingIsRejectedWhenGlobalRecordLimitIsReached() {
         User user = new User();
         user.setId(3);
@@ -134,6 +152,31 @@ class BookingServiceTest {
         assertEquals("PENDING", appointmentRepo.queriedStatus);
     }
 
+    @Test
+    void employeeTaskPageClampsPageAndUsesFiveRowOffset() {
+        Employee employee = availableEmployee(12);
+        employee.setUsername("worker");
+        employeeRepo.employee = employee;
+        Appointment appointment = new Appointment();
+        appointment.setId(31);
+        FakeAppointmentRepository appointmentRepo = new FakeAppointmentRepository();
+        appointmentRepo.employeeAppointmentTotal = 11;
+        appointmentRepo.employeeAppointmentPage = List.of(appointment);
+        BookingService pagedService = new BookingService(
+                null, employeeRepo, null, appointmentRepo);
+
+        PageResult<Appointment> result = pagedService.myAppointmentsAsEmployeePage(
+                "worker", "COMPLETED", 99, 5);
+
+        assertEquals(3, result.getPage());
+        assertEquals(3, result.getTotalPages());
+        assertEquals(11, result.getTotal());
+        assertEquals(List.of(appointment), result.getItems());
+        assertEquals(5, appointmentRepo.queriedLimit);
+        assertEquals(10, appointmentRepo.queriedOffset);
+        assertEquals("COMPLETED", appointmentRepo.queriedStatus);
+    }
+
     private Employee availableEmployee(int id) {
         Employee employee = new Employee();
         employee.setId(id);
@@ -152,9 +195,18 @@ class BookingServiceTest {
         private Integer queriedWeekday;
         private List<String> queriedPeriods;
         private Integer queriedServiceId;
+        private long availableEmployeeTotal;
+        private List<Employee> availableEmployeePage = List.of();
+        private int queriedLimit;
+        private int queriedOffset;
 
         FakeEmployeeRepository() {
             super(null);
+        }
+
+        @Override
+        public Optional<Employee> findByUsername(String username) {
+            return Optional.ofNullable(employee);
         }
 
         @Override
@@ -168,6 +220,25 @@ class BookingServiceTest {
         public List<Employee> findAvailableOnDate(LocalDate date, int weekday, Integer serviceId) {
             queriedServiceId = serviceId;
             return findAvailableOnDate(date, weekday);
+        }
+
+        @Override
+        public long countAvailableOnDate(LocalDate date, int weekday, Integer serviceId) {
+            queriedDate = date;
+            queriedWeekday = weekday;
+            queriedServiceId = serviceId;
+            return availableEmployeeTotal;
+        }
+
+        @Override
+        public List<Employee> findAvailableOnDatePage(LocalDate date, int weekday, Integer serviceId,
+                                                       int limit, int offset) {
+            queriedDate = date;
+            queriedWeekday = weekday;
+            queriedServiceId = serviceId;
+            queriedLimit = limit;
+            queriedOffset = offset;
+            return availableEmployeePage;
         }
 
         @Override
@@ -245,6 +316,8 @@ class BookingServiceTest {
         private int queriedLimit;
         private int queriedOffset;
         private String queriedStatus;
+        private long employeeAppointmentTotal;
+        private List<Appointment> employeeAppointmentPage = List.of();
 
         FakeAppointmentRepository() {
             super(null);
@@ -281,6 +354,21 @@ class BookingServiceTest {
             queriedLimit = limit;
             queriedOffset = offset;
             return userAppointmentPage;
+        }
+
+        @Override
+        public long countByEmployeeId(int employeeId, String status) {
+            queriedStatus = status;
+            return employeeAppointmentTotal;
+        }
+
+        @Override
+        public List<Appointment> findByEmployeeIdPage(int employeeId, String status,
+                                                       int limit, int offset) {
+            queriedStatus = status;
+            queriedLimit = limit;
+            queriedOffset = offset;
+            return employeeAppointmentPage;
         }
 
         @Override

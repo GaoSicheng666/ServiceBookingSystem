@@ -28,6 +28,28 @@ public class EmployeeRepository {
             "LEFT JOIN employee_training t ON t.employee_id = e.id " +
             "LEFT JOIN employee_profiles p ON p.employee_id = e.id ";
 
+    private static final String AVAILABLE_ON_DATE_FILTER =
+            "WHERE e.is_working = TRUE AND e.is_active = TRUE " +
+            "AND COALESCE(t.quiz_passed, FALSE) = TRUE " +
+            "AND (? IS NULL OR EXISTS ( " +
+            "  SELECT 1 FROM employee_service_capabilities esc " +
+            "  WHERE esc.employee_id = e.id AND esc.service_id = ? " +
+            ")) " +
+            "AND EXISTS ( " +
+            "  SELECT 1 FROM employee_availability ea " +
+            "  WHERE ea.employee_id = e.id AND ea.weekday = ? " +
+            "  AND NOT EXISTS ( " +
+            "    SELECT 1 FROM appointments a " +
+            "    WHERE a.employee_id = e.id AND a.appointment_date = ? " +
+            "    AND a.status <> 'CANCELLED' " +
+            "    AND (NOT EXISTS (SELECT 1 FROM appointment_time_slots old_slot " +
+            "                     WHERE old_slot.appointment_id = a.id) " +
+            "         OR EXISTS (SELECT 1 FROM appointment_time_slots booked_slot " +
+            "                    WHERE booked_slot.appointment_id = a.id " +
+            "                    AND booked_slot.time_period = ea.time_period)) " +
+            "  ) " +
+            ") ";
+
     private final JdbcTemplate jdbc;
 
     public EmployeeRepository(JdbcTemplate jdbc) {
@@ -144,6 +166,17 @@ public class EmployeeRepository {
         return jdbc.query(EMPLOYEE_SELECT + "ORDER BY e.id", RowMappers.EMPLOYEE);
     }
 
+    public List<Employee> findPage(int limit, int offset) {
+        return jdbc.query(
+                EMPLOYEE_SELECT + "ORDER BY e.id LIMIT ? OFFSET ?",
+                RowMappers.EMPLOYEE, limit, offset);
+    }
+
+    public long count() {
+        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM employees", Long.class);
+        return count == null ? 0 : count;
+    }
+
     /**
      * 查询指定日期至少还有一个空闲排班时段的员工。
      * 没有 appointment_time_slots 的旧预约按全天占用处理，避免旧数据升级后产生重复预约。
@@ -153,29 +186,27 @@ public class EmployeeRepository {
     }
 
     public List<Employee> findAvailableOnDate(LocalDate date, int weekday, Integer serviceId) {
-        String sql =
-                EMPLOYEE_SELECT +
-                "WHERE e.is_working = TRUE AND e.is_active = TRUE " +
-                "AND COALESCE(t.quiz_passed, FALSE) = TRUE " +
-                "AND (? IS NULL OR EXISTS ( " +
-                "  SELECT 1 FROM employee_service_capabilities esc " +
-                "  WHERE esc.employee_id = e.id AND esc.service_id = ? " +
-                ")) " +
-                "AND EXISTS ( " +
-                "  SELECT 1 FROM employee_availability ea " +
-                "  WHERE ea.employee_id = e.id AND ea.weekday = ? " +
-                "  AND NOT EXISTS ( " +
-                "    SELECT 1 FROM appointments a " +
-                "    WHERE a.employee_id = e.id AND a.appointment_date = ? " +
-                "    AND a.status <> 'CANCELLED' " +
-                "    AND (NOT EXISTS (SELECT 1 FROM appointment_time_slots old_slot " +
-                "                     WHERE old_slot.appointment_id = a.id) " +
-                "         OR EXISTS (SELECT 1 FROM appointment_time_slots booked_slot " +
-                "                    WHERE booked_slot.appointment_id = a.id " +
-                "                    AND booked_slot.time_period = ea.time_period)) " +
-                "  ) " +
-                ") ORDER BY e.id";
+        String sql = EMPLOYEE_SELECT + AVAILABLE_ON_DATE_FILTER + "ORDER BY e.id";
         return jdbc.query(sql, RowMappers.EMPLOYEE, serviceId, serviceId, weekday, date);
+    }
+
+    public List<Employee> findAvailableOnDatePage(LocalDate date, int weekday, Integer serviceId,
+                                                   int limit, int offset) {
+        String sql = EMPLOYEE_SELECT + AVAILABLE_ON_DATE_FILTER +
+                "ORDER BY e.id LIMIT ? OFFSET ?";
+        return jdbc.query(
+                sql, RowMappers.EMPLOYEE,
+                serviceId, serviceId, weekday, date, limit, offset);
+    }
+
+    public long countAvailableOnDate(LocalDate date, int weekday, Integer serviceId) {
+        String sql =
+                "SELECT COUNT(*) FROM employees e " +
+                "LEFT JOIN employee_training t ON t.employee_id = e.id " +
+                AVAILABLE_ON_DATE_FILTER;
+        Long count = jdbc.queryForObject(
+                sql, Long.class, serviceId, serviceId, weekday, date);
+        return count == null ? 0 : count;
     }
 
     /** 查询某位员工在指定日期仍未被预约的排班时段，并按一天内的先后顺序返回。 */

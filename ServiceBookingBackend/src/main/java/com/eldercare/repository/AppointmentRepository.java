@@ -187,6 +187,63 @@ public class AppointmentRepository {
                 DETAIL, employeeId, status);
     }
 
+    /** 护工端分页查询任务，保持最新预约日期和记录编号排在前面。 */
+    public List<Appointment> findByEmployeeIdPage(int employeeId, String status,
+                                                   int limit, int offset) {
+        if (status == null || status.isBlank()) {
+            return jdbc.query(
+                    DETAIL_SELECT +
+                            "WHERE a.employee_id = ? " +
+                            "ORDER BY a.appointment_date DESC, a.id DESC LIMIT ? OFFSET ?",
+                    DETAIL, employeeId, limit, offset);
+        }
+        return jdbc.query(
+                DETAIL_SELECT +
+                        "WHERE a.employee_id = ? AND a.status = ? " +
+                        "ORDER BY a.appointment_date DESC, a.id DESC LIMIT ? OFFSET ?",
+                DETAIL, employeeId, status, limit, offset);
+    }
+
+    public long countByEmployeeId(int employeeId, String status) {
+        Long count;
+        if (status == null || status.isBlank()) {
+            count = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM appointments WHERE employee_id = ?",
+                    Long.class, employeeId);
+        } else {
+            count = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM appointments WHERE employee_id = ? AND status = ?",
+                    Long.class, employeeId, status);
+        }
+        return count == null ? 0 : count;
+    }
+
+    public long countByEmployeeIdAndDate(int employeeId, String status, LocalDate date) {
+        Long count;
+        if (status == null || status.isBlank()) {
+            count = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM appointments WHERE employee_id = ? AND appointment_date = ?",
+                    Long.class, employeeId, date);
+        } else {
+            count = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM appointments " +
+                            "WHERE employee_id = ? AND appointment_date = ? AND status = ?",
+                    Long.class, employeeId, date, status);
+        }
+        return count == null ? 0 : count;
+    }
+
+    /** 返回今天及以后最近的一项待服务任务，用于护工首页的优先任务卡。 */
+    public Appointment findNextPendingByEmployeeId(int employeeId, LocalDate fromDate) {
+        List<Appointment> list = jdbc.query(
+                DETAIL_SELECT +
+                        "WHERE a.employee_id = ? AND a.status = 'PENDING' " +
+                        "AND a.appointment_date >= ? " +
+                        "ORDER BY a.appointment_date ASC, a.id ASC LIMIT 1",
+                DETAIL, employeeId, fromDate);
+        return list.isEmpty() ? null : list.get(0);
+    }
+
     /** 管理员:全部预约。 */
     public List<Appointment> findAll(String status) {
         if (status == null || status.isBlank()) {
