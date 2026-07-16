@@ -2063,16 +2063,9 @@ tr:last-child td {
 
 /* ==================== 护工工作台 ====================
    围绕任务概况、接单状态、下一项任务和全部任务组织页面。 */
-.employee-workbench {
+.employee-view-content {
   width: min(1160px, 100%);
   margin: 0 auto;
-  display: grid;
-  grid-template-columns: 176px minmax(0, 1fr);
-  align-items: start;
-  gap: 24px;
-}
-
-.employee-view-content {
   min-width: 0;
 }
 
@@ -2203,17 +2196,13 @@ tr:last-child td {
   line-height: 1.45;
 }
 
-.employee-view-tabs {
-  margin: 0;
-  padding: 4px;
-  border-radius: 8px;
-  background: #e8eeea;
+.employee-sidebar-nav {
+  margin: 16px 0 0;
+  padding: 14px 0 0;
+  border-top: 1px solid var(--line);
   display: grid;
   grid-template-columns: 1fr;
-  gap: 4px;
-  position: sticky;
-  top: 110px;
-  align-self: start;
+  gap: 6px;
 }
 
 .employee-profile-reminder {
@@ -2323,6 +2312,114 @@ tr:last-child td {
   color: var(--muted);
 }
 
+.employee-capability-fieldset {
+  min-width: 0;
+  margin: 4px 0 18px;
+  padding: 0;
+  border: 0;
+}
+
+.employee-capability-fieldset legend {
+  margin-bottom: 6px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.employee-capability-fieldset > p {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.employee-capability-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.employee-capability-grid label {
+  min-width: 0;
+  cursor: pointer;
+}
+
+.employee-capability-grid input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.employee-capability-grid label > span {
+  min-height: 72px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  column-gap: 9px;
+  align-items: center;
+}
+
+.employee-capability-grid b {
+  width: 22px;
+  height: 22px;
+  border: 1px solid #aab6af;
+  border-radius: 50%;
+  color: transparent;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+}
+
+.employee-capability-grid strong,
+.employee-capability-grid small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.employee-capability-grid strong {
+  font-size: 15px;
+}
+
+.employee-capability-grid small {
+  grid-column: 2;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.employee-capability-grid input:checked + span {
+  border-color: var(--primary);
+  background: #eaf2ed;
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.employee-capability-grid input:checked + span b {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.employee-capability-grid input:focus-visible + span {
+  outline: 3px solid rgba(47, 111, 104, 0.2);
+  outline-offset: 2px;
+}
+
+.employee-capability-empty {
+  padding: 16px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  background: #f7f9f7;
+  font-size: 14px;
+}
+
 .profile-field-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(150px, 0.45fr);
@@ -2358,7 +2455,7 @@ tr:last-child td {
   min-height: 48px;
 }
 
-.employee-view-tabs button,
+.employee-sidebar-nav button,
 .employee-task-filter button {
   min-height: 48px;
   border: 0;
@@ -2369,12 +2466,12 @@ tr:last-child td {
   cursor: pointer;
 }
 
-.employee-view-tabs button {
+.employee-sidebar-nav button {
   padding: 12px 14px;
   text-align: left;
 }
 
-.employee-view-tabs button.active,
+.employee-sidebar-nav button.active,
 .employee-task-filter button.active {
   background: var(--primary);
   color: #fff;
@@ -3435,17 +3532,11 @@ tr:last-child td {
     padding: 12px;
   }
 
-  .employee-workbench {
-    grid-template-columns: 1fr;
-    gap: 18px;
-  }
-
-  .employee-view-tabs {
+  .employee-sidebar-nav {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    position: static;
   }
 
-  .employee-view-tabs button {
+  .employee-sidebar-nav button {
     padding-left: 6px;
     padding-right: 6px;
     font-size: 14px;
@@ -3475,6 +3566,10 @@ tr:last-child td {
   .profile-field-grid {
     grid-template-columns: 1fr;
     gap: 0;
+  }
+
+  .employee-capability-grid {
+    grid-template-columns: 1fr;
   }
 
   .profile-save-bar .btn {

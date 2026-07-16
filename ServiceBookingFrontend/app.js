@@ -85,7 +85,7 @@ document.addEventListener("submit", async (event) => {
     if (action === "create-service") await createService(payload);
     if (action === "employee-quiz") await submitEmployeeQuiz(payload);
     if (action === "employee-schedule") await saveEmployeeAvailability(form);
-    if (action === "employee-profile") await saveEmployeeProfile(payload);
+    if (action === "employee-profile") await saveEmployeeProfile(payload, form);
     if (action === "employee-cancel-reason") {
       await submitEmployeeCancellation(form.dataset.appointmentId, payload);
     }
@@ -725,10 +725,14 @@ function renderSession() {
     `;
     return;
   }
+  const employeeNavigation = state.role === "EMPLOYEE" && state.data.employee?.quizPassed
+    ? renderEmployeeSidebarNavigation()
+    : "";
   el.sessionPanel.innerHTML = `
     <h2 id="session-title">当前账号</h2>
     <p><strong>${escapeHtml(state.name || "已登录")}</strong></p>
     <p class="muted small">${roleName(state.role)}</p>
+    ${employeeNavigation}
     <div class="divider"></div>
     <button class="btn secondary" type="button" data-action="refresh">刷新数据</button>
     <button class="btn ghost" type="button" data-action="logout">退出登录</button>
@@ -913,7 +917,11 @@ function stopUserAppointmentsAutoRefresh() {
  */
 async function loadAvailableEmployees(showMessage = true) {
   const date = state.selectedDate || today();
-  const params = new URLSearchParams({ date });
+  if (!state.selectedServiceId) throw new Error("请先选择服务项目");
+  const params = new URLSearchParams({
+    date,
+    serviceId: String(state.selectedServiceId)
+  });
   const employees = await api(`/employees/available?${params.toString()}`);
   state.data.availableEmployees = employees;
   if (showMessage) notify("当天可预约的服务人员已更新", "success");
@@ -1464,9 +1472,20 @@ async function loadEmployeeDashboard() {
   state.data.employeeAllAppointments = [];
   state.data.employeeAvailability = [];
   state.data.employeeEarnings = 0;
+  state.data.employeeServices = [];
+  state.data.employeeCapabilities = [];
 
   // 未完成学习或尚未通过答题时只需要个人培训状态，不请求工作台数据。
-  if (!me.quizPassed || state.employeeView === "profile") return;
+  if (!me.quizPassed) return;
+  if (state.employeeView === "profile") {
+    const [services, capabilities] = await Promise.all([
+      api("/services"),
+      api("/employees/me/capabilities")
+    ]);
+    state.data.employeeServices = services || [];
+    state.data.employeeCapabilities = capabilities || [];
+    return;
+  }
 
   const query = state.appointmentsFilter ? statusQuery() : "";
   const [appointments, allAppointments, availability, earnings] = await Promise.all([
@@ -1500,13 +1519,7 @@ function renderEmployeeDashboard() {
   if (state.employeeView === "profile") {
     el.viewEyebrow.textContent = "护工个人中心";
     el.viewTitle.textContent = "个人信息";
-    el.content.innerHTML = `
-      <div class="employee-workbench">
-        ${renderEmployeeViewTabs()}
-        <div class="employee-view-content">
-          ${renderEmployeeProfile(employee)}
-        </div>
-      </div>`;
+    el.content.innerHTML = `<div class="employee-view-content">${renderEmployeeProfile(employee)}</div>`;
     return;
   }
 
@@ -1523,9 +1536,7 @@ function renderEmployeeDashboard() {
   el.viewEyebrow.textContent = "护工任务中心";
   el.viewTitle.textContent = `${timeGreeting()}，${employee.name || state.name || "您好"}`;
   el.content.innerHTML = `
-    <div class="employee-workbench">
-      ${renderEmployeeViewTabs()}
-      <div class="employee-view-content">
+    <div class="employee-view-content">
         <section class="employee-overview">
           <div class="employee-metrics" aria-label="任务概况">
             <div><span>今日任务</span><strong>${todayTasks.length}</strong><small>项</small></div>
@@ -1550,25 +1561,26 @@ function renderEmployeeDashboard() {
 
         ${renderEmployeeAvailability()}
         ${renderEmployeeTaskWorkspace(nextTask, appointments)}
-      </div>
     </div>
   `;
 }
 
-/** 护工工作区合并为“工作任务”和“个人信息”两个左侧一级入口。 */
-function renderEmployeeViewTabs() {
+/** 护工工作区的两个入口直接放入页面最左侧账号栏。 */
+function renderEmployeeSidebarNavigation() {
   const tabs = [
     ["tasks", "工作任务"],
     ["profile", "个人信息"]
   ];
   return `
-    <nav class="employee-view-tabs" aria-label="护工工作区">
+    <nav class="employee-sidebar-nav" aria-label="护工工作区">
       ${tabs.map(([view, label]) => `<button type="button" class="${state.employeeView === view ? "active" : ""}" data-action="employee-view" data-view="${view}">${label}</button>`).join("")}
     </nav>`;
 }
 
 /** 生成可修改的护工个人资料页。 */
 function renderEmployeeProfile(employee) {
+  const services = state.data.employeeServices || [];
+  const capabilityIds = new Set((state.data.employeeCapabilities || []).map(String));
   const previewEmployee = {
     ...employee,
     avatarData: state.pendingEmployeeAvatar === null
@@ -1600,7 +1612,18 @@ function renderEmployeeProfile(employee) {
             <label class="field"><span>年龄</span><input name="age" type="number" min="18" max="100" value="${attr(employee.age)}" required></label>
           </div>
           <label class="field"><span>联系电话</span><input name="phone" inputmode="numeric" pattern="[0-9]{6,20}" maxlength="20" value="${attr(employee.phone)}" required></label>
-          <label class="field"><span>擅长服务</span><input name="specialty" maxlength="100" value="${attr(employee.specialty)}" placeholder="例如：陪诊、助浴、日常照护"></label>
+          <fieldset class="employee-capability-fieldset">
+            <legend>可胜任服务</legend>
+            <p>服务项目由管理员统一维护，请选择您能够独立完成的项目。</p>
+            ${services.length ? `
+              <div class="employee-capability-grid">
+                ${services.map((service) => `
+                  <label>
+                    <input type="checkbox" name="serviceId" value="${Number(service.id)}" ${capabilityIds.has(String(service.id)) ? "checked" : ""}>
+                    <span><b aria-hidden="true">✓</b><strong>${escapeHtml(service.name)}</strong><small>${escapeHtml(service.description || "平台服务项目")}</small></span>
+                  </label>`).join("")}
+              </div>` : `<div class="employee-capability-empty">管理员暂未上架可选择的服务项目</div>`}
+          </fieldset>
           <label class="field"><span>从业经历</span><textarea name="experience" maxlength="200" rows="3" placeholder="例如：从事居家照护5年，熟悉行动不便老人照护">${escapeHtml(employee.experience)}</textarea></label>
           <label class="field"><span>个人简介</span><textarea name="bio" maxlength="500" rows="4" placeholder="向老人和家属简单介绍您的服务特点">${escapeHtml(employee.bio)}</textarea></label>
           <div class="profile-save-bar"><span data-profile-save-hint>${state.employeeProfileDirty ? "有尚未保存的修改" : "修改后请及时保存"}</span><button class="btn" type="submit">保存个人信息</button></div>
@@ -1813,6 +1836,7 @@ async function showEmployeeView(view) {
   state.pendingEmployeeAvatar = null;
   state.employeeProfileDirty = false;
   await loadEmployeeDashboard();
+  renderSession();
   renderEmployeeDashboard();
 }
 
@@ -1908,12 +1932,23 @@ function updateEmployeeAvatarPreview() {
 }
 
 /** 保存护工基本信息、公开介绍以及本次新选择的头像。 */
-async function saveEmployeeProfile(payload) {
+async function saveEmployeeProfile(payload, form) {
+  const services = state.data.employeeServices || [];
+  const serviceIds = Array.from(form.querySelectorAll('input[name="serviceId"]:checked'))
+    .map((input) => Number(input.value))
+    .filter(Number.isInteger);
+  if (services.length && !serviceIds.length) {
+    throw new Error("请至少选择一项您能够胜任的服务");
+  }
+  const selectedServiceNames = services
+    .filter((service) => serviceIds.includes(Number(service.id)))
+    .map((service) => service.name);
   const body = {
     name: String(payload.name || "").trim(),
     age: Number(payload.age),
     phone: String(payload.phone || "").trim(),
-    specialty: String(payload.specialty || "").trim(),
+    specialty: selectedServiceNames.join("、"),
+    serviceIds,
     experience: String(payload.experience || "").trim(),
     bio: String(payload.bio || "").trim()
   };
