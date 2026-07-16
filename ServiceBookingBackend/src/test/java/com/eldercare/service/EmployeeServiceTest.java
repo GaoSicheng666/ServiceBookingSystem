@@ -3,6 +3,7 @@ package com.eldercare.service;
 import com.eldercare.common.BusinessException;
 import com.eldercare.dto.AvailabilityRequest;
 import com.eldercare.dto.EmployeeProfileRequest;
+import com.eldercare.dto.ServiceCapabilityRequest;
 import com.eldercare.dto.TrainingQuizRequest;
 import com.eldercare.entity.Employee;
 import com.eldercare.entity.ServiceItem;
@@ -142,6 +143,19 @@ class EmployeeServiceTest {
         assertEquals("陪诊服务、助浴服务", employeeRepo.savedSpecialty);
     }
 
+    @Test
+    void employeeCanSaveCapabilitiesSeparatelyFromProfile() {
+        employee.setQuizPassed(true);
+        serviceRepo.activeServices = List.of(service(1, "陪诊服务"), service(2, "助浴服务"));
+        ServiceCapabilityRequest request = new ServiceCapabilityRequest();
+        request.setServiceIds(List.of(2, 1, 2));
+
+        employeeService.updateServiceCapabilities("worker", request);
+
+        assertEquals(List.of(1, 2), employeeRepo.savedCapabilityIds);
+        assertEquals("陪诊服务、助浴服务", employeeRepo.savedSpecialty);
+    }
+
     private ServiceItem service(int id, String name) {
         ServiceItem item = new ServiceItem();
         item.setId(id);
@@ -196,6 +210,11 @@ class EmployeeServiceTest {
         @Override
         public void replaceServiceCapabilities(int employeeId, List<Integer> serviceIds) {
             savedCapabilityIds = serviceIds;
+        }
+
+        @Override
+        public void upsertSpecialty(int employeeId, String specialty) {
+            savedSpecialty = specialty;
         }
     }
 

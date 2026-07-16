@@ -2,6 +2,7 @@ package com.eldercare.service;
 
 import com.eldercare.common.BusinessException;
 import com.eldercare.dto.BookingRequest;
+import com.eldercare.dto.PageResult;
 import com.eldercare.entity.Appointment;
 import com.eldercare.entity.Employee;
 import com.eldercare.entity.ServiceItem;
@@ -22,6 +23,8 @@ import java.util.List;
 /** 预约业务:下单(事务+行锁防并发)、查询、取消、完成。 */
 @Service
 public class BookingService {
+
+    private static final int APPOINTMENT_RECORD_LIMIT = 9999;
 
     private static final List<String> TIME_PERIOD_ORDER =
             List.of("MORNING", "NOON", "AFTERNOON", "EVENING");
@@ -137,6 +140,9 @@ public class BookingService {
         if (appointmentRepo.existsActiveForEmployeeSlots(emp.getId(), date, timePeriods)) {
             throw new BusinessException(2001, "该员工在所选日期和时段已被预约");
         }
+        if (appointmentRepo.countAllForUpdate() >= APPOINTMENT_RECORD_LIMIT) {
+            throw new BusinessException(2009, "系统预约记录已达到9999条上限，请联系管理员清理历史记录");
+        }
 
         int appointmentId = appointmentRepo.insert(
                 user.getId(), emp.getId(), service.getId(), date);
@@ -174,6 +180,22 @@ public class BookingService {
         User user = userRepo.findByUsername(username)
                 .orElseThrow(() -> new BusinessException("用户不存在"));
         return appointmentRepo.findByUserId(user.getId(), status);
+    }
+
+    /** 老人预约记录服务端分页，前端固定每页 5 条，接口最大允许 20 条。 */
+    public PageResult<Appointment> myAppointmentsAsUserPage(String username, String status,
+                                                            int requestedPage, int requestedSize) {
+        if (requestedSize < 1 || requestedSize > 20) {
+            throw new BusinessException("每页预约记录数必须在1至20之间");
+        }
+        User user = userRepo.findByUsername(username)
+                .orElseThrow(() -> new BusinessException("用户不存在"));
+        long total = appointmentRepo.countByUserId(user.getId(), status);
+        int totalPages = Math.max(1, (int) Math.ceil((double) total / requestedSize));
+        int page = Math.min(Math.max(1, requestedPage), totalPages);
+        List<Appointment> items = appointmentRepo.findByUserIdPage(
+                user.getId(), status, requestedSize, (page - 1) * requestedSize);
+        return new PageResult<>(items, page, requestedSize, total, APPOINTMENT_RECORD_LIMIT);
     }
 
     /** 员工查看分配给自己的预约。 */

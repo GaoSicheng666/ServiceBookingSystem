@@ -6,6 +6,7 @@ import com.eldercare.entity.Employee;
 import com.eldercare.dto.AvailabilityRequest;
 import com.eldercare.dto.CancelAppointmentRequest;
 import com.eldercare.dto.EmployeeProfileRequest;
+import com.eldercare.dto.ServiceCapabilityRequest;
 import com.eldercare.dto.TrainingQuizRequest;
 import com.eldercare.service.BookingService;
 import com.eldercare.service.EmployeeService;
@@ -40,6 +41,13 @@ public class EmployeeController {
     @GetMapping("/me/capabilities")
     public ApiResponse<List<Integer>> capabilities() {
         return ApiResponse.ok(employeeService.getServiceCapabilities(CurrentUser.username()));
+    }
+
+    /** 工作页保存当前护工能够独立完成的服务项目。 */
+    @PutMapping("/me/capabilities")
+    public ApiResponse<Void> updateCapabilities(@Valid @RequestBody ServiceCapabilityRequest request) {
+        employeeService.updateServiceCapabilities(CurrentUser.username(), request);
+        return ApiResponse.ok();
     }
 
     /** 修改当前护工的头像、联系方式和公开服务介绍。 */

@@ -3,6 +3,7 @@ package com.eldercare.service;
 import com.eldercare.common.BusinessException;
 import com.eldercare.dto.AvailabilityRequest;
 import com.eldercare.dto.EmployeeProfileRequest;
+import com.eldercare.dto.ServiceCapabilityRequest;
 import com.eldercare.dto.TrainingQuizRequest;
 import com.eldercare.entity.Employee;
 import com.eldercare.entity.ServiceItem;
@@ -124,6 +125,24 @@ public class EmployeeService {
         return employeeRepo.findServiceCapabilityIds(employee.getId());
     }
 
+    /** 从管理员当前上架项目中整体保存护工可胜任的服务。 */
+    @Transactional
+    public void updateServiceCapabilities(String username, ServiceCapabilityRequest request) {
+        Employee employee = requireEmployee(username);
+        if (!employee.isQuizPassed()) {
+            throw new BusinessException("通过培训答题后才能设置可胜任服务");
+        }
+        List<Integer> requested = request == null || request.getServiceIds() == null
+                ? List.of() : request.getServiceIds();
+        List<ServiceItem> selectedServices = resolveActiveServices(requested);
+        List<Integer> serviceIds = selectedServices.stream().map(ServiceItem::getId).toList();
+        String specialty = selectedServices.stream()
+                .map(ServiceItem::getName)
+                .collect(Collectors.joining("、"));
+        employeeRepo.replaceServiceCapabilities(employee.getId(), serviceIds);
+        employeeRepo.upsertSpecialty(employee.getId(), specialty.isBlank() ? null : specialty);
+    }
+
     /** 修改护工本人基本资料和老人端可见的服务介绍。 */
     @Transactional
     public void updateProfile(String username, EmployeeProfileRequest request) {
@@ -137,14 +156,7 @@ public class EmployeeService {
         List<Integer> serviceIds = normalizeServiceIds(request.getServiceIds());
         String specialty = normalizeOptional(request.getSpecialty());
         if (serviceIds != null) {
-            List<ServiceItem> activeServices = serviceRepo.findActive();
-            Set<Integer> selectedIds = new LinkedHashSet<>(serviceIds);
-            List<ServiceItem> selectedServices = activeServices.stream()
-                    .filter(item -> selectedIds.contains(item.getId()))
-                    .toList();
-            if (selectedServices.size() != selectedIds.size()) {
-                throw new BusinessException("存在已删除或已下架的服务项目，请重新选择");
-            }
+            List<ServiceItem> selectedServices = resolveActiveServices(serviceIds);
             specialty = selectedServices.stream()
                     .map(ServiceItem::getName)
                     .collect(Collectors.joining("、"));
@@ -173,6 +185,18 @@ public class EmployeeService {
             ids.add(serviceId);
         }
         return List.copyOf(ids);
+    }
+
+    private List<ServiceItem> resolveActiveServices(List<Integer> requested) {
+        List<Integer> serviceIds = normalizeServiceIds(requested);
+        Set<Integer> selectedIds = new LinkedHashSet<>(serviceIds);
+        List<ServiceItem> selectedServices = serviceRepo.findActive().stream()
+                .filter(item -> selectedIds.contains(item.getId()))
+                .toList();
+        if (selectedServices.size() != selectedIds.size()) {
+            throw new BusinessException("存在已删除或已下架的服务项目，请重新选择");
+        }
+        return selectedServices;
     }
 
     private String normalizeOptional(String value) {

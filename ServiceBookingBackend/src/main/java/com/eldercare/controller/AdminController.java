@@ -5,6 +5,7 @@ import com.eldercare.entity.Appointment;
 import com.eldercare.entity.Employee;
 import com.eldercare.entity.ServiceItem;
 import com.eldercare.entity.User;
+import com.eldercare.dto.PageResult;
 import com.eldercare.service.AdminService;
 import org.springframework.web.bind.annotation.*;
 
@@ -95,5 +96,21 @@ public class AdminController {
     @GetMapping("/appointments")
     public ApiResponse<List<Appointment>> listAppointments(@RequestParam(required = false) String status) {
         return ApiResponse.ok(adminService.listAppointments(status));
+    }
+
+    /** 管理员预约分页；单页最多 50 条，前端默认使用 10 条。 */
+    @GetMapping("/appointments/page")
+    public ApiResponse<PageResult<Appointment>> pageAppointments(
+            @RequestParam(required = false) String status,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        return ApiResponse.ok(adminService.pageAppointments(status, page, size));
+    }
+
+    /** 永久删除预约及其时段、金额和取消原因。 */
+    @DeleteMapping("/appointments/{id}")
+    public ApiResponse<Void> deleteAppointment(@PathVariable int id) {
+        adminService.deleteAppointment(id);
+        return ApiResponse.ok();
     }
 }

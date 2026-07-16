@@ -93,9 +93,18 @@ public class EmployeeRepository {
                         "(employee_id, avatar_data, specialty, experience, bio) VALUES (?, ?, ?, ?, ?) " +
                         "ON DUPLICATE KEY UPDATE " +
                         "avatar_data = COALESCE(VALUES(avatar_data), avatar_data), " +
-                        "specialty = VALUES(specialty), experience = VALUES(experience), " +
+                        "specialty = COALESCE(VALUES(specialty), specialty), experience = VALUES(experience), " +
                         "bio = VALUES(bio), updated_at = CURRENT_TIMESTAMP",
                 employeeId, avatarData, specialty, experience, bio);
+    }
+
+    /** 仅更新由服务能力选择自动生成的擅长服务名称，不改动其他个人资料。 */
+    public void upsertSpecialty(int employeeId, String specialty) {
+        jdbc.update(
+                "INSERT INTO employee_profiles (employee_id, specialty) VALUES (?, ?) " +
+                        "ON DUPLICATE KEY UPDATE specialty = VALUES(specialty), " +
+                        "updated_at = CURRENT_TIMESTAMP",
+                employeeId, specialty);
     }
 
     /** 返回护工已经确认可以胜任的服务项目 ID。 */

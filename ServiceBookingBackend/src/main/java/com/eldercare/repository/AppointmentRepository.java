@@ -149,6 +149,34 @@ public class AppointmentRepository {
                 DETAIL, userId, status);
     }
 
+    /** 老人端分页查询本人的预约记录。 */
+    public List<Appointment> findByUserIdPage(int userId, String status, int limit, int offset) {
+        if (status == null || status.isBlank()) {
+            return jdbc.query(
+                    DETAIL_SELECT +
+                            "WHERE a.user_id = ? ORDER BY a.appointment_date DESC, a.id DESC LIMIT ? OFFSET ?",
+                    DETAIL, userId, limit, offset);
+        }
+        return jdbc.query(
+                DETAIL_SELECT +
+                        "WHERE a.user_id = ? AND a.status = ? " +
+                        "ORDER BY a.appointment_date DESC, a.id DESC LIMIT ? OFFSET ?",
+                DETAIL, userId, status, limit, offset);
+    }
+
+    public long countByUserId(int userId, String status) {
+        Long count;
+        if (status == null || status.isBlank()) {
+            count = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM appointments WHERE user_id = ?", Long.class, userId);
+        } else {
+            count = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM appointments WHERE user_id = ? AND status = ?",
+                    Long.class, userId, status);
+        }
+        return count == null ? 0 : count;
+    }
+
     /** 员工的预约列表。 */
     public List<Appointment> findByEmployeeId(int employeeId, String status) {
         if (status == null || status.isBlank()) {
@@ -168,6 +196,37 @@ public class AppointmentRepository {
                 DETAIL, status);
     }
 
+    /** 管理员分页查询预约，始终保持预约日期和创建顺序由新到旧。 */
+    public List<Appointment> findPage(String status, int limit, int offset) {
+        if (status == null || status.isBlank()) {
+            return jdbc.query(
+                    DETAIL_SELECT + "ORDER BY a.appointment_date DESC, a.id DESC LIMIT ? OFFSET ?",
+                    DETAIL, limit, offset);
+        }
+        return jdbc.query(
+                DETAIL_SELECT +
+                        "WHERE a.status = ? ORDER BY a.appointment_date DESC, a.id DESC LIMIT ? OFFSET ?",
+                DETAIL, status, limit, offset);
+    }
+
+    /** 统计全部或指定状态的预约数量。 */
+    public long count(String status) {
+        Long count;
+        if (status == null || status.isBlank()) {
+            count = jdbc.queryForObject("SELECT COUNT(*) FROM appointments", Long.class);
+        } else {
+            count = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM appointments WHERE status = ?", Long.class, status);
+        }
+        return count == null ? 0 : count;
+    }
+
+    /** 下单事务中锁定预约记录范围并统计总数，用于执行全局容量限制。 */
+    public long countAllForUpdate() {
+        return jdbc.queryForList(
+                "SELECT id FROM appointments ORDER BY id FOR UPDATE", Integer.class).size();
+    }
+
     /** 查单条(含归属校验用的 user_id/employee_id)。 */
     public Appointment findById(int id) {
         List<Appointment> list = jdbc.query(DETAIL_SELECT + "WHERE a.id = ?", DETAIL, id);
@@ -176,6 +235,11 @@ public class AppointmentRepository {
 
     public int updateStatus(int id, String status) {
         return jdbc.update("UPDATE appointments SET status = ? WHERE id = ?", status, id);
+    }
+
+    /** 子表均配置 ON DELETE CASCADE，删除主记录会同步清理时段、金额和取消原因。 */
+    public int deleteById(int id) {
+        return jdbc.update("DELETE FROM appointments WHERE id = ?", id);
     }
 
     /** 保存取消发起方与原因；同一预约再次写入时以最后一次记录为准。 */

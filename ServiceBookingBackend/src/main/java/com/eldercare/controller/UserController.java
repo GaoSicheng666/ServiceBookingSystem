@@ -5,6 +5,7 @@ import com.eldercare.entity.Appointment;
 import com.eldercare.entity.Employee;
 import com.eldercare.entity.User;
 import com.eldercare.dto.BookingRequest;
+import com.eldercare.dto.PageResult;
 import com.eldercare.service.BookingService;
 import com.eldercare.service.UserService;
 import com.eldercare.security.CurrentUser;
@@ -69,6 +70,16 @@ public class UserController {
     @GetMapping("/appointments/me")
     public ApiResponse<List<Appointment>> myAppointments(@RequestParam(required = false) String status) {
         return ApiResponse.ok(bookingService.myAppointmentsAsUser(CurrentUser.username(), status));
+    }
+
+    /** 老人本人的预约分页，前端每页 5 条，接口单页最多 20 条。 */
+    @GetMapping("/appointments/me/page")
+    public ApiResponse<PageResult<Appointment>> myAppointmentPage(
+            @RequestParam(required = false) String status,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "5") int size) {
+        return ApiResponse.ok(bookingService.myAppointmentsAsUserPage(
+                CurrentUser.username(), status, page, size));
     }
 
     /** 取消我的预约。 */

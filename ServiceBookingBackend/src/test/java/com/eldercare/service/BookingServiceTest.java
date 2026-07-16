@@ -1,15 +1,27 @@
 package com.eldercare.service;
 
+import com.eldercare.common.BusinessException;
+import com.eldercare.dto.BookingRequest;
+import com.eldercare.dto.PageResult;
+import com.eldercare.entity.Appointment;
 import com.eldercare.entity.Employee;
+import com.eldercare.entity.ServiceItem;
+import com.eldercare.entity.User;
+import com.eldercare.repository.AppointmentRepository;
 import com.eldercare.repository.EmployeeRepository;
+import com.eldercare.repository.ServiceRepository;
+import com.eldercare.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class BookingServiceTest {
 
@@ -64,6 +76,62 @@ class BookingServiceTest {
         assertEquals(List.of("NOON", "AFTERNOON"), result);
         assertEquals(12, employeeRepo.queriedEmployeeId);
         assertEquals(date, employeeRepo.queriedDate);
+    }
+
+    @Test
+    void bookingIsRejectedWhenGlobalRecordLimitIsReached() {
+        User user = new User();
+        user.setId(3);
+        user.setUsername("elder");
+        Employee employee = availableEmployee(12);
+        employeeRepo.employee = employee;
+        ServiceItem serviceItem = new ServiceItem();
+        serviceItem.setId(5);
+        serviceItem.setName("陪诊服务");
+        serviceItem.setReferencePrice(BigDecimal.valueOf(120));
+        serviceItem.setActive(true);
+        FakeAppointmentRepository appointmentRepo = new FakeAppointmentRepository();
+        appointmentRepo.totalForUpdate = 9999;
+        BookingService limitedService = new BookingService(
+                new FakeUserRepository(user), employeeRepo,
+                new FakeServiceRepository(serviceItem), appointmentRepo);
+        BookingRequest request = new BookingRequest();
+        request.setEmployeeId(12);
+        request.setServiceId(5);
+        request.setAppointmentDate(LocalDate.now().plusDays(1));
+        request.setTimePeriods(List.of("MORNING"));
+
+        BusinessException error = assertThrows(
+                BusinessException.class,
+                () -> limitedService.book("elder", request));
+
+        assertEquals("系统预约记录已达到9999条上限，请联系管理员清理历史记录", error.getMessage());
+        assertFalse(appointmentRepo.insertCalled);
+    }
+
+    @Test
+    void userAppointmentPageClampsPageAndUsesFiveRowOffset() {
+        User user = new User();
+        user.setId(3);
+        user.setUsername("elder");
+        Appointment appointment = new Appointment();
+        appointment.setId(21);
+        FakeAppointmentRepository appointmentRepo = new FakeAppointmentRepository();
+        appointmentRepo.userAppointmentTotal = 12;
+        appointmentRepo.userAppointmentPage = List.of(appointment);
+        BookingService pagedService = new BookingService(
+                new FakeUserRepository(user), employeeRepo, null, appointmentRepo);
+
+        PageResult<Appointment> result = pagedService.myAppointmentsAsUserPage(
+                "elder", "PENDING", 99, 5);
+
+        assertEquals(3, result.getPage());
+        assertEquals(3, result.getTotalPages());
+        assertEquals(12, result.getTotal());
+        assertEquals(List.of(appointment), result.getItems());
+        assertEquals(5, appointmentRepo.queriedLimit);
+        assertEquals(10, appointmentRepo.queriedOffset);
+        assertEquals("PENDING", appointmentRepo.queriedStatus);
     }
 
     private Employee availableEmployee(int id) {
@@ -128,6 +196,97 @@ class BookingServiceTest {
             queriedDate = date;
             queriedWeekday = weekday;
             return availablePeriods;
+        }
+
+        @Override
+        public boolean hasServiceCapability(int employeeId, int serviceId) {
+            return true;
+        }
+
+        @Override
+        public boolean hasAvailability(int employeeId, int weekday, List<String> timePeriods) {
+            return true;
+        }
+    }
+
+    private static class FakeUserRepository extends UserRepository {
+        private final User user;
+
+        FakeUserRepository(User user) {
+            super(null);
+            this.user = user;
+        }
+
+        @Override
+        public Optional<User> findByUsername(String username) {
+            return Optional.of(user);
+        }
+    }
+
+    private static class FakeServiceRepository extends ServiceRepository {
+        private final ServiceItem serviceItem;
+
+        FakeServiceRepository(ServiceItem serviceItem) {
+            super(null);
+            this.serviceItem = serviceItem;
+        }
+
+        @Override
+        public Optional<ServiceItem> findById(int id) {
+            return Optional.of(serviceItem);
+        }
+    }
+
+    private static class FakeAppointmentRepository extends AppointmentRepository {
+        private long totalForUpdate;
+        private boolean insertCalled;
+        private long userAppointmentTotal;
+        private List<Appointment> userAppointmentPage = List.of();
+        private int queriedLimit;
+        private int queriedOffset;
+        private String queriedStatus;
+
+        FakeAppointmentRepository() {
+            super(null);
+        }
+
+        @Override
+        public void lockBookingOwners(int userId, int employeeId) {
+        }
+
+        @Override
+        public boolean existsActiveForUserSlots(int userId, LocalDate date, List<String> timePeriods) {
+            return false;
+        }
+
+        @Override
+        public boolean existsActiveForEmployeeSlots(int employeeId, LocalDate date, List<String> timePeriods) {
+            return false;
+        }
+
+        @Override
+        public long countAllForUpdate() {
+            return totalForUpdate;
+        }
+
+        @Override
+        public long countByUserId(int userId, String status) {
+            queriedStatus = status;
+            return userAppointmentTotal;
+        }
+
+        @Override
+        public List<Appointment> findByUserIdPage(int userId, String status, int limit, int offset) {
+            queriedStatus = status;
+            queriedLimit = limit;
+            queriedOffset = offset;
+            return userAppointmentPage;
+        }
+
+        @Override
+        public int insert(int userId, int employeeId, int serviceId, LocalDate date) {
+            insertCalled = true;
+            return 1;
         }
     }
 }

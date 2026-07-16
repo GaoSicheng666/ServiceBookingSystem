@@ -150,10 +150,12 @@ mvn package -DskipTests
 | 用户 | GET | `/api/employees/{id}/available-time-periods?date=2026-07-15` | 查询选定员工当天剩余可预约时段 |
 | 用户 | POST | `/api/appointments` | 下预约单，提交日期和一个或多个时段 |
 | 用户 | GET | `/api/appointments/me?status=` | 我的预约+历史 |
+| 用户 | GET | `/api/appointments/me/page?page=1&size=5&status=` | 本人的预约分页，单页最多 20 条 |
 | 用户 | PATCH | `/api/appointments/{id}/cancel` | 取消预约 |
 | 员工 | GET | `/api/employees/me` | 我的信息 |
 | 员工 | GET | `/api/employees/me/capabilities` | 查询本人已选择的可胜任服务项目 ID |
-| 员工 | PUT | `/api/employees/me/profile` | 修改头像、联系方式、公开介绍和可胜任服务 |
+| 员工 | PUT | `/api/employees/me/capabilities` | 单独保存工作页选择的可胜任服务 |
+| 员工 | PUT | `/api/employees/me/profile` | 修改头像、联系方式和公开介绍 |
 | 员工 | PATCH | `/api/employees/me/training/complete` | 确认完成岗前学习 |
 | 员工 | POST | `/api/employees/me/training/quiz` | 提交 4 道培训题 |
 | 员工 | GET/PUT | `/api/employees/me/availability` | 查询或保存每周可工作时段 |
@@ -169,6 +171,8 @@ mvn package -DskipTests
 | 管理员 | PATCH | `/api/admin/employees/{id}/training` | 为护工开放答题权限 |
 | 管理员 | PATCH/DELETE | `/api/admin/employees/{id}/active`、`/api/admin/employees/{id}` | 禁用/删除员工 |
 | 管理员 | GET | `/api/admin/appointments?status=` | 全部预约总览 |
+| 管理员 | GET | `/api/admin/appointments/page?page=1&size=10&status=` | 预约分页，单页最多 50 条 |
+| 管理员 | DELETE | `/api/admin/appointments/{id}` | 永久删除预约及其附属记录 |
 
 ---
 
@@ -253,10 +257,11 @@ curl -X PATCH http://localhost:8080/api/employees/me/appointments/1/cancel \
 - **密码安全**:沿用原项目 PBKDF2(12 万次迭代 + 随机盐);种子/旧明文密码在首次登录时自动升级为哈希。
 - **防并发重复预约**:下单在事务中用 `SELECT ... FOR UPDATE` 行锁，保证同一员工或同一老人不会在同一天的同一时段重复预约；不同且不重叠的时段可以分别预约。
 - **预约增强**:老人先选服务和日期，系统只列出选择了该服务能力且当天至少还有一个空闲时段的护工；选定护工后再显示其当天剩余时段供老人多选。预约单含服务、日期、时段和状态，提交时会再次校验服务能力、排班及冲突。
+- **预约容量与管理**:预约记录总量上限为 9999 条；老人“我的预约”使用服务端分页、前端每页 5 条并在后台静默刷新，管理员预约总览使用服务端分页、前端每页 10 条、接口单页最多 50 条，并可永久删除历史预约以释放容量。
 - **金额快照**:下单总额等于服务参考单价乘所选时段数，单价和总额保存在 `appointment_billing`，管理员日后改价不会影响历史订单；护工累计收入只汇总已完成订单。
 - **取消原因留痕**:护工取消预约时必须选择预设原因或填写其他原因，发起方和原因保存在 `appointment_cancellations`，老人、护工和管理员都能查看。
 - **岗前准入**:护工需完成学习并在 4 道题中答对至少 3 道；未通过者不能接单，也不会出现在可预约列表中。
-- **护工个人资料**:护工可维护头像、姓名、年龄、联系电话、从业经历和个人简介，并从管理员上架项目中选择可胜任服务；关联保存在 `employee_service_capabilities`，公开资料会展示在老人选择服务人员的页面。
+- **护工个人资料与能力**:护工可在个人信息页维护头像、姓名、年龄、联系电话、从业经历和个人简介；可胜任服务移动到工作页时间表下方并单独保存，关联保存在 `employee_service_capabilities`，公开资料会展示在老人选择服务人员的页面。
 - **工作时间持久化**:星期一至星期日每天四个时段的选择保存在 `employee_availability` 表中，时段为 06:00-10:00、10:00-14:00、14:00-18:00、18:00-22:00。
 - **权限隔离**:`/api/admin/**` 由拦截器强制要求 ADMIN 角色。
 - **单账号单会话**:每次登录都会覆盖该账号的有效会话编号，后登录设备会使旧设备 JWT 失效。
