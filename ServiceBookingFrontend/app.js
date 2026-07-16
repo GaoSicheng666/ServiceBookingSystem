@@ -14,6 +14,7 @@ const TIME_PERIODS = [
 // “我的预约”每页固定展示 5 条，并在页面停留期间每 15 秒读取一次最新记录。
 const USER_APPOINTMENTS_PAGE_SIZE = 5;
 const USER_APPOINTMENTS_REFRESH_INTERVAL = 15000;
+const ADMIN_APPOINTMENTS_PAGE_SIZE = 10;
 let userAppointmentsRefreshTimer = null;
 let userAppointmentsRefreshing = false;
 
@@ -32,8 +33,8 @@ const state = {
   authMode: "login",
   activeAdminTab: "services",
   appointmentsFilter: "",
+  adminAppointmentsPage: 1,
   userAppointmentsPage: 1,
-  userAppointmentsLastUpdated: "",
   userView: "home",
   employeeView: "tasks",
   employeeProfileDirty: false,
@@ -85,7 +86,8 @@ document.addEventListener("submit", async (event) => {
     if (action === "create-service") await createService(payload);
     if (action === "employee-quiz") await submitEmployeeQuiz(payload);
     if (action === "employee-schedule") await saveEmployeeAvailability(form);
-    if (action === "employee-profile") await saveEmployeeProfile(payload, form);
+    if (action === "employee-capabilities") await saveEmployeeCapabilities(form);
+    if (action === "employee-profile") await saveEmployeeProfile(payload);
     if (action === "employee-cancel-reason") {
       await submitEmployeeCancellation(form.dataset.appointmentId, payload);
     }
@@ -192,11 +194,7 @@ document.addEventListener("click", async (event) => {
       return;
     }
     if (action === "user-appointments-page") {
-      changeUserAppointmentsPage(Number(button.dataset.page));
-      return;
-    }
-    if (action === "refresh-user-appointments") {
-      await refreshUserAppointments(true);
+      await changeUserAppointmentsPage(Number(button.dataset.page));
       return;
     }
     if (action === "cancel-user") {
@@ -254,6 +252,14 @@ document.addEventListener("click", async (event) => {
     if (action === "admin-tab") {
       state.activeAdminTab = button.dataset.tab;
       renderAdminDashboard();
+      return;
+    }
+    if (action === "admin-appointments-page") {
+      await changeAdminAppointmentsPage(Number(button.dataset.page));
+      return;
+    }
+    if (action === "delete-appointment") {
+      await deleteAdminAppointment(button.dataset.id);
       return;
     }
     if (action === "save-service") {
@@ -325,6 +331,9 @@ document.addEventListener("change", async (event) => {
     const scheduleForm = target.closest("form");
     updateEmployeeAvailabilityCounter(scheduleForm);
   }
+  if (target.matches('form[data-submit="employee-capabilities"] input[name="serviceId"]')) {
+    updateEmployeeCapabilityCounter(target.closest("form"));
+  }
   if (target.matches('form[data-submit="employee-cancel-reason"] input[name="cancelReason"]')) {
     const customField = target.form.querySelector("[data-custom-cancel-reason]");
     const customInput = customField?.querySelector("textarea");
@@ -354,7 +363,8 @@ document.addEventListener("change", async (event) => {
   }
   if (target.id === "adminStatusFilter") {
     state.appointmentsFilter = target.value;
-    await loadAdminData();
+    state.adminAppointmentsPage = 1;
+    await loadAdminAppointmentsPage();
     renderAdminDashboard();
   }
 });
@@ -809,8 +819,8 @@ function logout(message = "已退出登录") {
   state.name = "";
   state.data = {};
   state.appointmentsFilter = "";
+  state.adminAppointmentsPage = 1;
   state.userAppointmentsPage = 1;
-  state.userAppointmentsLastUpdated = "";
   state.userView = "home";
   state.employeeView = "tasks";
   state.employeeProfileDirty = false;
@@ -859,36 +869,52 @@ async function refreshDashboard() {
 
 /** 同时加载老人资料、可预约服务和本人的预约记录，并写入 state.data。 */
 async function loadUserDashboard() {
-  const [me, services, appointments] = await Promise.all([
+  const [me, services, appointmentPage] = await Promise.all([
     api("/users/me"),
     api("/services"),
-    api(`/appointments/me${statusQuery()}`)
+    api(userAppointmentsPageUrl(state.userView === "home"))
   ]);
   state.data.user = me;
   state.data.services = services;
-  state.data.userAppointments = appointments;
-  if (state.userView === "appointments") {
-    state.userAppointmentsLastUpdated = formatRefreshTime();
-  }
+  applyUserAppointmentPage(appointmentPage);
 }
 
 /**
  * 只刷新老人本人的预约记录，避免 15 秒定时任务反复读取个人资料和服务项目。
  * 手动刷新失败时把错误交给统一提示处理；自动刷新失败则保留当前列表，等待下次重试。
  */
-async function refreshUserAppointments(showMessage = false) {
+async function refreshUserAppointments() {
   if (userAppointmentsRefreshing || !state.token || state.role !== "USER" || state.userView !== "appointments") return;
   userAppointmentsRefreshing = true;
   try {
-    state.data.userAppointments = await api(`/appointments/me${statusQuery()}`);
-    state.userAppointmentsLastUpdated = formatRefreshTime();
+    applyUserAppointmentPage(await api(userAppointmentsPageUrl(false)));
     renderUserDashboard();
-    if (showMessage) notify("预约记录已刷新", "success");
-  } catch (error) {
-    if (showMessage) throw error;
+  } catch (_) {
+    // 静默刷新失败时保留当前页面，等待下一个刷新周期。
   } finally {
     userAppointmentsRefreshing = false;
   }
+}
+
+/** 老人首页只查询待服务数量；预约列表按当前状态和页码查询 5 条。 */
+function userAppointmentsPageUrl(homeSummary = false) {
+  const params = new URLSearchParams({
+    page: String(homeSummary ? 1 : state.userAppointmentsPage),
+    size: String(homeSummary ? 1 : USER_APPOINTMENTS_PAGE_SIZE)
+  });
+  const status = homeSummary ? "PENDING" : state.appointmentsFilter;
+  if (status) params.set("status", status);
+  return `/appointments/me/page?${params.toString()}`;
+}
+
+/** 保存后端分页响应，并同步后端校正后的有效页码。 */
+function applyUserAppointmentPage(pageData) {
+  const normalized = pageData && !Array.isArray(pageData)
+    ? pageData
+    : { items: Array.isArray(pageData) ? pageData : [], page: 1, size: USER_APPOINTMENTS_PAGE_SIZE, total: 0, totalPages: 1 };
+  state.data.userAppointmentPage = normalized;
+  state.data.userAppointments = normalized.items || [];
+  state.userAppointmentsPage = Number(normalized.page || 1);
 }
 
 /** 进入“我的预约”后启动唯一的自动刷新定时器。 */
@@ -900,7 +926,7 @@ function startUserAppointmentsAutoRefresh() {
       stopUserAppointmentsAutoRefresh();
       return;
     }
-    refreshUserAppointments(false);
+    refreshUserAppointments();
   }, USER_APPOINTMENTS_REFRESH_INTERVAL);
 }
 
@@ -961,7 +987,7 @@ function renderUserDashboard() {
     return;
   }
 
-  const pendingCount = appointments.filter((item) => item.status === "PENDING").length;
+  const pendingCount = Number(state.data.userAppointmentPage?.total || 0);
   el.content.innerHTML = `
     <div class="senior-shell senior-home">
       <section class="senior-greeting">
@@ -1312,15 +1338,16 @@ function renderBookingConfirmation(services, employees) {
 
 /**
  * 生成预约状态筛选栏和纵向预约卡片列表。
- * 后端返回结果在前端按预约 ID 倒序排列，再按每页 5 条切片，确保新创建的预约始终优先显示。
+ * 后端按最新记录优先返回当前页，每页固定 5 条。
  */
 function renderUserAppointments(appointments) {
   const filters = [["", "全部"], ["PENDING", "待服务"], ["COMPLETED", "已完成"], ["CANCELLED", "已取消"]];
-  const sortedAppointments = [...appointments].sort((left, right) => Number(right.id || 0) - Number(left.id || 0));
-  const totalPages = Math.max(1, Math.ceil(sortedAppointments.length / USER_APPOINTMENTS_PAGE_SIZE));
-  state.userAppointmentsPage = Math.min(Math.max(1, state.userAppointmentsPage), totalPages);
-  const pageStart = (state.userAppointmentsPage - 1) * USER_APPOINTMENTS_PAGE_SIZE;
-  const pageAppointments = sortedAppointments.slice(pageStart, pageStart + USER_APPOINTMENTS_PAGE_SIZE);
+  const pageData = state.data.userAppointmentPage || {
+    page: 1,
+    size: USER_APPOINTMENTS_PAGE_SIZE,
+    total: appointments.length,
+    totalPages: 1
+  };
   return `
     <div class="senior-shell senior-appointments">
       <div class="appointments-heading">
@@ -1328,33 +1355,27 @@ function renderUserAppointments(appointments) {
           <button class="senior-back" type="button" data-action="user-home">← 返回服务首页</button>
           <h3>我的预约</h3>
         </div>
-        <div class="appointments-refresh" aria-live="polite">
-          <span class="appointments-refresh-status">
-            <span class="refresh-status-dot" aria-hidden="true"></span>
-            <span><strong>每 15 秒自动刷新</strong><small>上次更新：${escapeHtml(state.userAppointmentsLastUpdated || "刚刚")}</small></span>
-          </span>
-          <button class="btn secondary" type="button" data-action="refresh-user-appointments">立即刷新</button>
-        </div>
       </div>
       <div class="senior-filter" aria-label="预约状态筛选">
         ${filters.map(([value, label]) => `<button type="button" class="${state.appointmentsFilter === value ? "active" : ""}" data-action="user-appointment-filter" data-status="${value}">${label}</button>`).join("")}
       </div>
-      ${sortedAppointments.length ? `
+      ${Number(pageData.total || 0) ? `
         <div class="appointments-result-meta">
-          <span>共 ${sortedAppointments.length} 条记录</span>
+          <span>共 ${Number(pageData.total || 0)} 条记录，每页 ${Number(pageData.size || USER_APPOINTMENTS_PAGE_SIZE)} 条</span>
           <strong>最新预约排在最前</strong>
         </div>
-        <div class="appointment-card-list">${pageAppointments.map(renderUserAppointmentCard).join("")}</div>
-        ${renderUserAppointmentsPagination(sortedAppointments.length, totalPages)}
+        <div class="appointment-card-list">${appointments.map(renderUserAppointmentCard).join("")}</div>
+        ${renderUserAppointmentsPagination(pageData)}
       ` : `<div class="senior-empty">这里暂时没有预约记录。</div>`}
     </div>
   `;
 }
 
 /** 预约记录超过 5 条时显示上一页、页码和下一页。 */
-function renderUserAppointmentsPagination(totalItems, totalPages) {
-  if (totalItems <= USER_APPOINTMENTS_PAGE_SIZE) return "";
-  const currentPage = state.userAppointmentsPage;
+function renderUserAppointmentsPagination(pageData) {
+  const currentPage = Number(pageData.page || 1);
+  const totalPages = Math.max(1, Number(pageData.totalPages || 1));
+  if (totalPages <= 1) return "";
   return `
     <nav class="appointments-pagination" aria-label="预约记录分页">
       <button type="button" data-action="user-appointments-page" data-page="${currentPage - 1}" ${currentPage <= 1 ? "disabled" : ""}>← 上一页</button>
@@ -1365,10 +1386,10 @@ function renderUserAppointmentsPagination(totalItems, totalPages) {
 }
 
 /** 切换预约记录页码，并把视线带回列表顶部。 */
-function changeUserAppointmentsPage(page) {
-  const totalItems = (state.data.userAppointments || []).length;
-  const totalPages = Math.max(1, Math.ceil(totalItems / USER_APPOINTMENTS_PAGE_SIZE));
-  state.userAppointmentsPage = Math.min(Math.max(1, page), totalPages);
+async function changeUserAppointmentsPage(page) {
+  if (!Number.isInteger(page) || page < 1) return;
+  state.userAppointmentsPage = page;
+  applyUserAppointmentPage(await api(userAppointmentsPageUrl(false)));
   renderUserDashboard();
   document.querySelector(".senior-appointments")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -1454,7 +1475,7 @@ async function cancelUserAppointment(id) {
   if (!confirm("确定要取消这个预约吗？")) return;
   await api(`/appointments/${id}/cancel`, { method: "PATCH" });
   notify("预约已取消", "success");
-  await refreshUserAppointments(false);
+  await refreshUserAppointments();
 }
 
 /* ==================== 护工端 ====================
@@ -1477,27 +1498,23 @@ async function loadEmployeeDashboard() {
 
   // 未完成学习或尚未通过答题时只需要个人培训状态，不请求工作台数据。
   if (!me.quizPassed) return;
-  if (state.employeeView === "profile") {
-    const [services, capabilities] = await Promise.all([
-      api("/services"),
-      api("/employees/me/capabilities")
-    ]);
-    state.data.employeeServices = services || [];
-    state.data.employeeCapabilities = capabilities || [];
-    return;
-  }
+  if (state.employeeView === "profile") return;
 
   const query = state.appointmentsFilter ? statusQuery() : "";
-  const [appointments, allAppointments, availability, earnings] = await Promise.all([
+  const [appointments, allAppointments, availability, earnings, services, capabilities] = await Promise.all([
     api(`/employees/me/appointments${query}`),
     query ? api("/employees/me/appointments") : Promise.resolve(null),
     api("/employees/me/availability"),
-    api("/employees/me/earnings")
+    api("/employees/me/earnings"),
+    api("/services"),
+    api("/employees/me/capabilities")
   ]);
   state.data.employeeAppointments = appointments;
   state.data.employeeAllAppointments = allAppointments || appointments;
   state.data.employeeAvailability = availability || [];
   state.data.employeeEarnings = Number(earnings || 0);
+  state.data.employeeServices = services || [];
+  state.data.employeeCapabilities = capabilities || [];
 }
 
 /**
@@ -1560,6 +1577,7 @@ function renderEmployeeDashboard() {
         </div>
 
         ${renderEmployeeAvailability()}
+        ${renderEmployeeCapabilities()}
         ${renderEmployeeTaskWorkspace(nextTask, appointments)}
     </div>
   `;
@@ -1579,8 +1597,6 @@ function renderEmployeeSidebarNavigation() {
 
 /** 生成可修改的护工个人资料页。 */
 function renderEmployeeProfile(employee) {
-  const services = state.data.employeeServices || [];
-  const capabilityIds = new Set((state.data.employeeCapabilities || []).map(String));
   const previewEmployee = {
     ...employee,
     avatarData: state.pendingEmployeeAvatar === null
@@ -1612,18 +1628,6 @@ function renderEmployeeProfile(employee) {
             <label class="field"><span>年龄</span><input name="age" type="number" min="18" max="100" value="${attr(employee.age)}" required></label>
           </div>
           <label class="field"><span>联系电话</span><input name="phone" inputmode="numeric" pattern="[0-9]{6,20}" maxlength="20" value="${attr(employee.phone)}" required></label>
-          <fieldset class="employee-capability-fieldset">
-            <legend>可胜任服务</legend>
-            <p>服务项目由管理员统一维护，请选择您能够独立完成的项目。</p>
-            ${services.length ? `
-              <div class="employee-capability-grid">
-                ${services.map((service) => `
-                  <label>
-                    <input type="checkbox" name="serviceId" value="${Number(service.id)}" ${capabilityIds.has(String(service.id)) ? "checked" : ""}>
-                    <span><b aria-hidden="true">✓</b><strong>${escapeHtml(service.name)}</strong><small>${escapeHtml(service.description || "平台服务项目")}</small></span>
-                  </label>`).join("")}
-              </div>` : `<div class="employee-capability-empty">管理员暂未上架可选择的服务项目</div>`}
-          </fieldset>
           <label class="field"><span>从业经历</span><textarea name="experience" maxlength="200" rows="3" placeholder="例如：从事居家照护5年，熟悉行动不便老人照护">${escapeHtml(employee.experience)}</textarea></label>
           <label class="field"><span>个人简介</span><textarea name="bio" maxlength="500" rows="4" placeholder="向老人和家属简单介绍您的服务特点">${escapeHtml(employee.bio)}</textarea></label>
           <div class="profile-save-bar"><span data-profile-save-hint>${state.employeeProfileDirty ? "有尚未保存的修改" : "修改后请及时保存"}</span><button class="btn" type="submit">保存个人信息</button></div>
@@ -1797,6 +1801,62 @@ function renderEmployeeAvailability() {
   `;
 }
 
+/**
+ * 在工作时间表下方展示管理员当前上架的服务项目。
+ * 服务能力与个人资料分别保存，避免修改时间或能力时误提交姓名、头像等资料。
+ */
+function renderEmployeeCapabilities() {
+  const services = state.data.employeeServices || [];
+  const capabilityIds = new Set((state.data.employeeCapabilities || []).map(String));
+  return `
+    <section class="employee-capabilities">
+      <div class="employee-section-heading">
+        <div><p>工作台功能</p><h3>可胜任服务</h3></div>
+        <span>请选择您能够独立完成的服务项目</span>
+      </div>
+      <form data-submit="employee-capabilities">
+        <fieldset class="employee-capability-fieldset">
+          <legend class="sr-only">可胜任服务项目</legend>
+          <p>服务项目由管理员统一维护。保存后，老人选择对应服务时才会看到您。</p>
+          ${services.length ? `
+            <div class="employee-capability-grid">
+              ${services.map((service) => `
+                <label>
+                  <input type="checkbox" name="serviceId" value="${Number(service.id)}" ${capabilityIds.has(String(service.id)) ? "checked" : ""}>
+                  <span><b aria-hidden="true">✓</b><strong>${escapeHtml(service.name)}</strong><small>${escapeHtml(service.description || "平台服务项目")}</small></span>
+                </label>`).join("")}
+            </div>` : `<div class="employee-capability-empty">管理员暂未上架可选择的服务项目</div>`}
+        </fieldset>
+        <div class="employee-capability-save">
+          <span>已选择 <strong data-capability-count>${capabilityIds.size}</strong> 项服务</span>
+          <button class="btn" type="submit" ${services.length ? "" : "disabled"}>保存可胜任服务</button>
+        </div>
+      </form>
+    </section>`;
+}
+
+/** 保存护工可胜任的服务项目，修改前后都保留明确的二次确认。 */
+async function saveEmployeeCapabilities(form) {
+  const services = state.data.employeeServices || [];
+  const serviceIds = Array.from(form.querySelectorAll('input[name="serviceId"]:checked'))
+    .map((input) => Number(input.value))
+    .filter(Number.isInteger);
+  if (services.length && !serviceIds.length) {
+    throw new Error("请至少选择一项您能够胜任的服务");
+  }
+  if (!confirm(`确定保存这 ${serviceIds.length} 项可胜任服务吗？`)) return;
+  await api("/employees/me/capabilities", { method: "PUT", body: { serviceIds } });
+  state.data.employeeCapabilities = serviceIds;
+  notify("可胜任服务已保存", "success");
+  renderEmployeeDashboard();
+}
+
+/** 更新服务能力选择区域下方的已选数量。 */
+function updateEmployeeCapabilityCounter(form) {
+  const counter = form?.querySelector("[data-capability-count]");
+  if (counter) counter.textContent = form.querySelectorAll('input[name="serviceId"]:checked').length;
+}
+
 /** 收集时间表中的所有复选框并整体保存，空列表表示暂时不安排工作。 */
 async function saveEmployeeAvailability(form) {
   const slots = Array.from(form.querySelectorAll('input[name="slot"]:checked')).map((input) => input.value);
@@ -1932,23 +1992,11 @@ function updateEmployeeAvatarPreview() {
 }
 
 /** 保存护工基本信息、公开介绍以及本次新选择的头像。 */
-async function saveEmployeeProfile(payload, form) {
-  const services = state.data.employeeServices || [];
-  const serviceIds = Array.from(form.querySelectorAll('input[name="serviceId"]:checked'))
-    .map((input) => Number(input.value))
-    .filter(Number.isInteger);
-  if (services.length && !serviceIds.length) {
-    throw new Error("请至少选择一项您能够胜任的服务");
-  }
-  const selectedServiceNames = services
-    .filter((service) => serviceIds.includes(Number(service.id)))
-    .map((service) => service.name);
+async function saveEmployeeProfile(payload) {
   const body = {
     name: String(payload.name || "").trim(),
     age: Number(payload.age),
     phone: String(payload.phone || "").trim(),
-    specialty: selectedServiceNames.join("、"),
-    serviceIds,
     experience: String(payload.experience || "").trim(),
     bio: String(payload.bio || "").trim()
   };
@@ -2165,17 +2213,42 @@ async function submitEmployeeCancellation(id, payload) {
 
 /** 并行加载管理员四类数据，减少进入后台时等待多个串行请求的时间。 */
 async function loadAdminData() {
-  const query = statusQuery();
-  const [services, users, employees, appointments] = await Promise.all([
+  const [services, users, employees, appointmentPage] = await Promise.all([
     api("/admin/services"),
     api("/admin/users"),
     api("/admin/employees"),
-    api(`/admin/appointments${query}`)
+    api(adminAppointmentsPageUrl())
   ]);
   state.data.adminServices = services;
   state.data.adminUsers = users;
   state.data.adminEmployees = employees;
-  state.data.adminAppointments = appointments;
+  applyAdminAppointmentPage(appointmentPage);
+}
+
+/** 只重新读取管理员当前预约页，翻页、筛选和删除时无需重复加载其他后台数据。 */
+async function loadAdminAppointmentsPage() {
+  const appointmentPage = await api(adminAppointmentsPageUrl());
+  applyAdminAppointmentPage(appointmentPage);
+}
+
+/** 生成预约分页接口地址，状态为空时不发送 status 参数。 */
+function adminAppointmentsPageUrl() {
+  const params = new URLSearchParams({
+    page: String(state.adminAppointmentsPage),
+    size: String(ADMIN_APPOINTMENTS_PAGE_SIZE)
+  });
+  if (state.appointmentsFilter) params.set("status", state.appointmentsFilter);
+  return `/admin/appointments/page?${params.toString()}`;
+}
+
+/** 保存分页响应，并使用后端校正后的页码防止删除末页数据后停留在空页。 */
+function applyAdminAppointmentPage(pageData) {
+  const normalized = pageData && !Array.isArray(pageData)
+    ? pageData
+    : { items: Array.isArray(pageData) ? pageData : [], page: 1, size: ADMIN_APPOINTMENTS_PAGE_SIZE, total: 0, totalPages: 1, maxTotal: 9999 };
+  state.data.adminAppointmentPage = normalized;
+  state.data.adminAppointments = normalized.items || [];
+  state.adminAppointmentsPage = Number(normalized.page || 1);
 }
 
 /** 渲染管理员数据概况、功能标签页和当前标签对应的管理面板。 */
@@ -2330,17 +2403,59 @@ function employeeTrainingBadge(employee) {
 /** 生成全平台预约总览，并允许管理员按预约状态筛选。 */
 function adminAppointmentsPanel() {
   const appointments = state.data.adminAppointments || [];
+  const pageData = state.data.adminAppointmentPage || {
+    page: 1,
+    size: ADMIN_APPOINTMENTS_PAGE_SIZE,
+    total: appointments.length,
+    totalPages: 1,
+    maxTotal: 9999
+  };
   return `
     <section class="card">
-      <div class="row">
-        <h3 class="section-title">全部预约</h3>
+      <div class="admin-appointments-toolbar">
+        <div>
+          <h3 class="section-title">全部预约</h3>
+          <p>共 <strong>${Number(pageData.total || 0)}</strong> 条记录，系统最多保留 ${Number(pageData.maxTotal || 9999)} 条，每页 ${Number(pageData.size || ADMIN_APPOINTMENTS_PAGE_SIZE)} 条</p>
+        </div>
         <select id="adminStatusFilter">
           ${statusOptions()}
         </select>
       </div>
       ${appointmentsTable(appointments, "admin")}
+      ${renderAdminAppointmentsPagination(pageData)}
     </section>
   `;
+}
+
+/** 管理员预约页码控制，页数只有一页时仍显示总量但隐藏翻页按钮。 */
+function renderAdminAppointmentsPagination(pageData) {
+  const currentPage = Number(pageData.page || 1);
+  const totalPages = Math.max(1, Number(pageData.totalPages || 1));
+  if (totalPages <= 1) return "";
+  return `
+    <nav class="appointments-pagination" aria-label="管理员预约记录分页">
+      <button type="button" data-action="admin-appointments-page" data-page="${currentPage - 1}" ${currentPage <= 1 ? "disabled" : ""}>← 上一页</button>
+      <span>第 <strong>${currentPage}</strong> 页，共 ${totalPages} 页</span>
+      <button type="button" data-action="admin-appointments-page" data-page="${currentPage + 1}" ${currentPage >= totalPages ? "disabled" : ""}>下一页 →</button>
+    </nav>`;
+}
+
+/** 跳转管理员预约页，并滚回预约管理面板顶部。 */
+async function changeAdminAppointmentsPage(page) {
+  if (!Number.isInteger(page) || page < 1) return;
+  state.adminAppointmentsPage = page;
+  await loadAdminAppointmentsPage();
+  renderAdminDashboard();
+  document.querySelector(".admin-appointments-toolbar")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+/** 永久删除预约前明确提示影响范围，成功后重新加载当前有效页。 */
+async function deleteAdminAppointment(id) {
+  if (!confirm(`确定永久删除预约 #${id} 吗？\n关联的服务时段、金额和取消原因也会删除，此操作无法恢复。`)) return;
+  await api(`/admin/appointments/${id}`, { method: "DELETE" });
+  notify("预约记录已删除", "success");
+  await loadAdminAppointmentsPage();
+  renderAdminDashboard();
 }
 
 /**
@@ -2463,6 +2578,9 @@ function appointmentsTable(appointments, mode) {
 
 /** 根据预约状态和查看角色生成允许执行的操作，非待服务记录只能查看。 */
 function appointmentActions(item, mode) {
+  if (mode === "admin") {
+    return `<button class="btn danger" type="button" data-action="delete-appointment" data-id="${item.id}" title="永久删除这条预约">删除</button>`;
+  }
   if (item.status !== "PENDING") return `<span class="muted small">无可用操作</span>`;
   if (mode === "user") {
     return `<button class="btn danger" type="button" data-action="cancel-user" data-id="${item.id}">取消</button>`;
@@ -2616,16 +2734,6 @@ function formatMoney(value) {
   return Number.isFinite(amount)
     ? amount.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : "0.00";
-}
-
-/** 返回自动刷新状态使用的本地时分秒。 */
-function formatRefreshTime(value = new Date()) {
-  return value.toLocaleTimeString("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false
-  });
 }
 
 /** 把后端时段代码转换为“早间 06:00-10:00”一类可读文本，并保持一天内的时间顺序。 */
