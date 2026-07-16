@@ -230,6 +230,12 @@ body {
   padding-right: 54px;
 }
 
+/* Edge 会给 password 输入框附加原生小眼睛；隐藏它，只保留右侧统一的自定义按钮。 */
+.password-control > input::-ms-reveal,
+.password-control > input::-ms-clear {
+  display: none;
+}
+
 .password-eye {
   width: 38px;
   height: 38px;
