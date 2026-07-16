@@ -1826,6 +1826,25 @@ tr:last-child td {
   font-weight: 700;
 }
 
+.list-result-meta,
+.admin-list-heading {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.admin-list-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.admin-list-heading h3 {
+  margin: 0;
+  color: var(--text);
+}
+
 /* 老人预约记录使用纵向卡片，不采用信息密集的后台表格。 */
 .appointment-card-list {
   display: grid;
