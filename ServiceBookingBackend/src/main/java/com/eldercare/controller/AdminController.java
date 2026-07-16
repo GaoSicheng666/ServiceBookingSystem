@@ -6,7 +6,9 @@ import com.eldercare.entity.Employee;
 import com.eldercare.entity.ServiceItem;
 import com.eldercare.entity.User;
 import com.eldercare.dto.PageResult;
+import com.eldercare.dto.BatchDeleteRequest;
 import com.eldercare.service.AdminService;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -133,5 +135,12 @@ public class AdminController {
     public ApiResponse<Void> deleteAppointment(@PathVariable int id) {
         adminService.deleteAppointment(id);
         return ApiResponse.ok();
+    }
+
+    /** 批量永久删除管理员在当前页勾选的预约记录。 */
+    @DeleteMapping("/appointments/batch")
+    public ApiResponse<Integer> deleteAppointments(
+            @Valid @RequestBody BatchDeleteRequest request) {
+        return ApiResponse.ok(adminService.deleteAppointments(request.getIds()));
     }
 }

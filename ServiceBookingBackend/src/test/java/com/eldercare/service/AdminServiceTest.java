@@ -71,6 +71,16 @@ class AdminServiceTest {
         assertThrows(BusinessException.class, () -> adminService.deleteAppointment(404));
     }
 
+    @Test
+    void batchDeleteRemovesDistinctSelectedAppointments() {
+        appointmentRepo.batchDeleteResult = 2;
+
+        int deleted = adminService.deleteAppointments(List.of(3, 3, 8));
+
+        assertEquals(2, deleted);
+        assertEquals(List.of(3, 8), appointmentRepo.batchDeletedIds);
+    }
+
     private Appointment appointment(int id) {
         Appointment appointment = new Appointment();
         appointment.setId(id);
@@ -83,6 +93,8 @@ class AdminServiceTest {
         private int requestedLimit;
         private int requestedOffset;
         private int deleteResult = 1;
+        private int batchDeleteResult;
+        private List<Integer> batchDeletedIds = List.of();
 
         FakeAppointmentRepository() {
             super(null);
@@ -103,6 +115,12 @@ class AdminServiceTest {
         @Override
         public int deleteById(int id) {
             return deleteResult;
+        }
+
+        @Override
+        public int deleteByIds(List<Integer> ids) {
+            batchDeletedIds = ids;
+            return batchDeleteResult;
         }
     }
 

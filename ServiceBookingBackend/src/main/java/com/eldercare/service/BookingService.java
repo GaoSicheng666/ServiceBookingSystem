@@ -168,18 +168,19 @@ public class BookingService {
             throw new BusinessException(2003, "该员工在所选日期和时段不可预约");
         }
 
-        // 固定顺序锁住老人和护工后再检查时段，防止并发请求同时通过冲突校验。
+        // 固定顺序锁住老人、护工和预约容量，防止并发请求同时通过冲突与容量校验。
         appointmentRepo.lockBookingOwners(user.getId(), emp.getId());
+        long currentTotal = appointmentRepo.countAllForUpdate();
+        if (currentTotal >= APPOINTMENT_RECORD_LIMIT) {
+            int deleteCount = (int) (currentTotal - APPOINTMENT_RECORD_LIMIT + 1);
+            appointmentRepo.deleteOldest(deleteCount);
+        }
         if (appointmentRepo.existsActiveForUserSlots(user.getId(), date, timePeriods)) {
             throw new BusinessException(2006, "您在所选日期和时段已有预约");
         }
         if (appointmentRepo.existsActiveForEmployeeSlots(emp.getId(), date, timePeriods)) {
             throw new BusinessException(2001, "该员工在所选日期和时段已被预约");
         }
-        if (appointmentRepo.countAllForUpdate() >= APPOINTMENT_RECORD_LIMIT) {
-            throw new BusinessException(2009, "系统预约记录已达到9999条上限，请联系管理员清理历史记录");
-        }
-
         int appointmentId = appointmentRepo.insert(
                 user.getId(), emp.getId(), service.getId(), date);
         appointmentRepo.insertTimeSlots(appointmentId, timePeriods);

@@ -284,6 +284,18 @@ public class AppointmentRepository {
                 "SELECT id FROM appointments ORDER BY id FOR UPDATE", Integer.class).size();
     }
 
+    /**
+     * 删除写入时间最早的若干预约，为容量已满时的新预约腾出空间。
+     * 附属时段、金额和取消原因由数据库 ON DELETE CASCADE 一并清理。
+     */
+    public int deleteOldest(int count) {
+        if (count <= 0) return 0;
+        List<Integer> ids = jdbc.queryForList(
+                "SELECT id FROM appointments ORDER BY id ASC LIMIT ?",
+                Integer.class, count);
+        return deleteByIds(ids);
+    }
+
     /** 查单条(含归属校验用的 user_id/employee_id)。 */
     public Appointment findById(int id) {
         List<Appointment> list = jdbc.query(DETAIL_SELECT + "WHERE a.id = ?", DETAIL, id);
@@ -297,6 +309,15 @@ public class AppointmentRepository {
     /** 子表均配置 ON DELETE CASCADE，删除主记录会同步清理时段、金额和取消原因。 */
     public int deleteById(int id) {
         return jdbc.update("DELETE FROM appointments WHERE id = ?", id);
+    }
+
+    /** 使用参数占位符批量删除管理员选中的预约，避免拼接外部输入。 */
+    public int deleteByIds(List<Integer> ids) {
+        if (ids == null || ids.isEmpty()) return 0;
+        String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
+        return jdbc.update(
+                "DELETE FROM appointments WHERE id IN (" + placeholders + ")",
+                ids.toArray());
     }
 
     /** 保存取消发起方与原因；同一预约再次写入时以最后一次记录为准。 */

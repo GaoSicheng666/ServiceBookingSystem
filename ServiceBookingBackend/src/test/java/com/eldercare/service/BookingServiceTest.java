@@ -20,8 +20,8 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BookingServiceTest {
 
@@ -97,7 +97,7 @@ class BookingServiceTest {
     }
 
     @Test
-    void bookingIsRejectedWhenGlobalRecordLimitIsReached() {
+    void bookingAtGlobalRecordLimitDeletesOldestAndContinues() {
         User user = new User();
         user.setId(3);
         user.setUsername("elder");
@@ -119,12 +119,10 @@ class BookingServiceTest {
         request.setAppointmentDate(LocalDate.now().plusDays(1));
         request.setTimePeriods(List.of("MORNING"));
 
-        BusinessException error = assertThrows(
-                BusinessException.class,
-                () -> limitedService.book("elder", request));
+        limitedService.book("elder", request);
 
-        assertEquals("系统预约记录已达到9999条上限，请联系管理员清理历史记录", error.getMessage());
-        assertFalse(appointmentRepo.insertCalled);
+        assertEquals(1, appointmentRepo.deletedOldestCount);
+        assertTrue(appointmentRepo.insertCalled);
     }
 
     @Test
@@ -311,6 +309,7 @@ class BookingServiceTest {
     private static class FakeAppointmentRepository extends AppointmentRepository {
         private long totalForUpdate;
         private boolean insertCalled;
+        private int deletedOldestCount;
         private long userAppointmentTotal;
         private List<Appointment> userAppointmentPage = List.of();
         private int queriedLimit;
@@ -340,6 +339,12 @@ class BookingServiceTest {
         @Override
         public long countAllForUpdate() {
             return totalForUpdate;
+        }
+
+        @Override
+        public int deleteOldest(int count) {
+            deletedOldestCount = count;
+            return count;
         }
 
         @Override
@@ -375,6 +380,15 @@ class BookingServiceTest {
         public int insert(int userId, int employeeId, int serviceId, LocalDate date) {
             insertCalled = true;
             return 1;
+        }
+
+        @Override
+        public void insertTimeSlots(int appointmentId, List<String> timePeriods) {
+        }
+
+        @Override
+        public void insertBilling(int appointmentId, BigDecimal unitPrice, int slotCount,
+                                  BigDecimal totalAmount) {
         }
     }
 }

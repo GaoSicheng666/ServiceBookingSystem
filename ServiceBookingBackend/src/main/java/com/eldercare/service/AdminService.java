@@ -155,4 +155,14 @@ public class AdminService {
             throw new BusinessException("预约记录不存在或已被删除");
         }
     }
+
+    /** 管理员批量永久删除预约，重复编号只处理一次。 */
+    @Transactional
+    public int deleteAppointments(List<Integer> ids) {
+        List<Integer> uniqueIds = ids == null ? List.of() : ids.stream().distinct().toList();
+        if (uniqueIds.isEmpty()) {
+            throw new BusinessException("请至少选择一条预约记录");
+        }
+        return appointmentRepo.deleteByIds(uniqueIds);
+    }
 }
